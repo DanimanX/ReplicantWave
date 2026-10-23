@@ -38,7 +38,7 @@ There is also a direct **☕ DONATE** button in the top navigation bar of the pl
 
 **ReplicantWave** is a next-generation Rust-powered clone and reimagining of the Wavetable architecture, infused with a **Cyberpunk 2077 / Neon Noir** aesthetic and engineered for ultra-low CPU utilization.
 
-Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer with a sliding navigation drawer** (inspired by *Replicant303*), full **Cytomic ZDF multimode filtering**, a multi-algorithm **Cyber Distortion engine**, and **16 factory presets** tailored for dark electronic music.
+Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer with a sliding navigation drawer** (inspired by *Replicant303*), full **Cytomic ZDF multimode filtering**, a multi-algorithm **Cyber Distortion engine**, modular analog patch cables, real-time FX response monitors, and **16 factory presets** tailored for dark electronic music.
 
 ---
 
@@ -47,7 +47,7 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer
 ### 🔊 Wavetable Sound Generation
 - **2 Dual Wavetable Oscillators**:
   - Continuous frame position morphing with linear & cubic table interpolation.
-  - Up to **8 Unison voices** per oscillator with detune, stereo spread, and random phase initializers.
+  - Up to **8 Unison voices** per oscillator with detune, stereo spread, and precomputed phase gains.
   - **Formant Warp** (phase frequency windowing) and **Bend Warp** (non-linear phase curves).
   - Semitone tuning (-36 to +36 st), Fine tuning (-100 to +100 ct), stereo panning, and level gain.
 - **Embedded Cyberpunk Wavetable Banks**:
@@ -75,23 +75,28 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer
   - Per-source routing matrix: route or bypass OSC 1, OSC 2, Sub, and Noise independently.
   - Key tracking and Velocity tracking.
 
-### 🎛️ Analog Rotary Hardware Controls
-- **Analog Rotary Potentiometers**: Hardware-style rotary knobs with illuminated neon angle arcs, metallic dial caps, fine-tune precision drag (`Shift` modifier), double-click reset, and contextual logarithmic/linear scaling.
-- Clean 2-row analog synth arrays for OSC 1, OSC 2, ZDF Filter, ADSR Envelopes, and FX modules.
+### 🎛️ Pure Analog Hardware Rotary Knobs (Zero Sliders)
+- **Authentic Potentiometers**: 11 radial graduation marks, metallic knurled chassis, brushed dual-tone dial cap, illuminated neon arc track, high-contrast needle with neon pip, and live formatted parameter values displayed directly underneath.
+- Mouse-wheel support, fine-tune precision drag (`Shift` modifier), double-click reset, and contextual logarithmic/linear scaling.
+- Modular rack enclosures with corner chassis screws and realistic curved analog patch cables.
 
-### 🔮 3D GPU Animated Wavetable Engine
-- **Live 3D Perspective Waterfall Mesh**: Dynamic 3D undulating terrain rendered directly via GPU with depth fog, dynamic perspective tilt, and wireframe ribbons.
-- **Neon Laser Scanline & Particle Orb**: Real-time laser sweep synchronized to the wavetable frame index and flying cyber energy particle nodes.
+### 🔮 3D GPU-Accelerated Animated Holographic Wavetable Engine
+- **Orbital 3D Perspective Waterfall Mesh**: Dynamic 3D undulating terrain rendered directly via hardware GPU triangles (`egui::Mesh`) with depth fog, dynamic perspective tilt, and wireframe ribbons.
+- **Sweeping Depth Laser Scanner**: Sweeps back and forth through depth, casting glowing highlights on terrain slices.
+- **Peak Target Marker & Traveling Cyber Orb**: Real-time laser sweep synchronized to the wavetable frame index and flying cyber energy particle nodes at 60 FPS.
 
 ### ⚡ 64-Step Sliding Sequencer (Replicant303 Style)
 - **Collapsible Drawer Handle**:
   - Slides open and closed with a click (`[ ⚡ 64-STEP PATTERN SEQUENCER // EXPAND / COLLAPSE ⚡ ]`).
-- **Smooth Viewport Sliding Bar & Auto-Follow**:
-  - Continuously slide across all 64 steps smoothly, or jump via quick-page buttons: `[1-16]`, `[17-32]`, `[33-48]`, `[49-64]`.
+- **Interactive 64-Step Radar Overview Bar**:
+  - Miniature timeline showing all 64 steps, gate status, accent, active playhead, and clickable viewport jump bracket.
+- **Rotary Dial & Quick-Page Jump**:
+  - Smooth rotary dial navigation `VIEW [0..48]` plus quick-page buttons: `[1-16]`, `[17-32]`, `[33-48]`, `[49-64]`.
   - **FOLLOW Mode**: Automatically tracks the active playhead across all 64 steps in real time.
 - **DAW & Standalone Seamless Bridging**:
   - **SYNC: DAW**: Automatically locks and triggers with host DAW transport playback in VST3/CLAP/AU.
-  - **SYNC: FREE**: Internal standalone tempo clock with dedicated `BPM` analog rotary knob (40 to 240 BPM).
+  - **KEY TRIG**: Incoming MIDI notes transpose the pattern to that key (`root_note = note`) and trigger playback in sync.
+  - **FREE RUN**: Internal standalone tempo clock with dedicated `BPM` analog rotary knob (40 to 240 BPM).
 - **Per-Step Hardware Controls**:
   - Gate (On/Off toggle) with live neon LED cursor.
   - Analog Pitch Knob (-24 to +24 semitones with real-time musical note display: C2, D#2, etc.).
@@ -107,93 +112,73 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer
   - Groove Swing (0% to 75% analog rotary knob).
   - 🎲 Randomize (musical pentatonic/minor cyberpunk intervals) and ✖ Clear utilities.
 
-### 🧪 Cyberpunk Multi-FX Engine
+### 🧪 Cyberpunk Multi-FX Engine with Live Curve Monitors
 - **Trance Gate**: 16-step stereo rhythmic chopper with attack/release smoothing.
-- **Stereo Chorus**: Dual LFO modulated delay lines with phase width spread.
-- **Cyber Distortion**:
-  - *Overdrive* (smooth hyperbolic softclip).
-  - *Bitcrusher* (sample rate decimation & bit quantization).
-  - *Fire Amp* (asymmetric warm saturation).
-  - *Grind Amp* (wavefolding fuzz).
-- **Ping-Pong Delay**: Tempo-synced (or ms) stereo cross-feedback delay with damping filter.
-- **Diffusion Reverb**: Algorithmic stereo plate/hall reverb with tuned comb filters, cached coefficients, and allpass diffusers.
+- **Stereo Chorus**: Dual LFO modulated delay lines with live sine modulation monitor.
+- **Cyber Distortion**: Mini real-time saturation curve monitor (*Overdrive*, *Bitcrusher*, *Fire Amp*, *Grind Amp*).
+- **Ping-Pong Delay**: Tempo-synced stereo delay with live ping-pong bounce taps monitor.
+- **Diffusion Reverb**: Algorithmic stereo plate/hall reverb with tuned comb filters and live diffusion decay monitor.
 
 ### 🔋 CPU-Friendly Ultra-Optimized DSP Architecture
-- **Eliminated CPU Spikes**: Bitmasked power-of-two table lookups, fast polynomial SVF filter coefficient calculations, and hardware-accelerated `exp2()` note-to-frequency conversions.
-- **Zero Audio-Thread Allocations**: Everything is pre-allocated at initialization.
+- **Eliminated CPU Spikes**: Precalculated envelope decay/release multipliers eliminate transcendental `.exp()` in the sample loop; cached SVF coefficients avoid `tan()` per sample; unison phase gains precalculated outside loops.
+- **Zero Audio-Thread Allocations & Lock-Free Scope**: Scopes decoupled from per-sample loop for sub-millisecond block execution.
 - **Voice Inactivity Sleeping**: Inactive voices immediately exit the processing loop once their envelopes finish.
-- **Voice Stealing Algorithm**: Smart allocation reuses the oldest or lowest-volume releasing voice without audio clicks.
 
 ---
 
 ## 🎚️ Factory Presets (Cyberpunk Soundbank)
 
-1. **Night City Bass**: Heavy rolling neuro-bass with resonant filter drive and tape crunch.
-2. **Arasaka Matrix Pad**: Lush dystopian corporate soundscape with stereo chorus and shimmering reverb.
-3. **Neon Blade 2049**: Heroic Vangelis-inspired brass/saw lead soaring above rainy neon towers.
-4. **Chrome Acid 303**: Iconic screaming resonant TB-style acid squelch with portamento slides.
-5. **Netrunner Arp**: Bouncing 16th-note FM plucks cascading into a stereo cyber-delay.
-6. **Darksynth Power Stab**: Aggressive 8-voice supersaw power stab for hard electronic drops.
-7. **Corpo Tower Dystopia**: Dark metallic industrial drone with notch sweep and infinite diffusion.
-8. **Megacity Combat 2077**: Relentless mid-tempo cyber-industrial bass with wavefolded fuzz and pump gate.
-9. **Ghost In The Wire Choir**: Ethereal vocal formant choir floating through high-density diffusion.
-10. **Subdermal 808 Rumble**: Chest-rattling 808 sub bass with saturated low harmonics.
-11. **Synthetic Tears Pad**: Melancholic CS-80 inspired synthwave brass pad soaked in tape delay.
-12. **Cyber Glitch 64-Step**: 64-step fast bitcrushed modular sequence using sliding bar navigation.
-13. **Kiroshi Scanner Sequence**: Tactical cybernetic scanner audio sweep with 64-step bandpass modulation.
-14. **Overclocked Sync Screamer**: Hard-synced screamer lead that cuts cleanly through dense cyberpunk mixes.
-15. **Afterlife Future Rave**: Underground Afterlife club pumping bass/pad with trance gate rhythm.
-16. **Braindance Memory**: Nostalgic digital artifacts and shimmering space echoing in virtual memory.
+ReplicantWave comes loaded with 16 high-voltage cyberpunk presets:
+
+| Preset Name | Category | Characteristics |
+| :--- | :--- | :--- |
+| **Night City Bass** | Bass | Cyber Neuro table, ZDF 24dB lowpass, aggressive overdrive & stereo chorus. |
+| **Arasaka Tower** | Lead | Analog Morph table, 7th interval tuning, bitcrushed delay & long hall reverb. |
+| **Combat Zone Lead** | Lead | Digital FM table, high pitch drive, wide chorus & rhythmic trance gate. |
+| **Megabuilding Pad** | Pad | Slow attack vocaloid morph, subtle PWM detune & deep cathedral diffusion. |
+| **Neon Highway** | Sequence | 16-step rolling acid sequence, 132 BPM, key-tracked resonance squeal. |
+| **Chrome Acid 303** | Acid | Cyber Acid wavetable, aggressive portamento slide, snappy accent resonance. |
+| **Braindance Sub** | Bass | Sub Zero table, sine sub-oscillator sub-bass reinforcement & softclip. |
+| **Cybernetic Choir** | Pad | Vocaloid synth table, multi-frame morphing with stereo ping-pong spatial width. |
+| **Blackwall Protocol** | Lead | Dystopian steel table, aggressive fire amp distortion & ping-pong delay. |
+| **Neuro Grid Pluck** | Pluck | Fast 5ms ADSR transient, steep 24dB bandpass filter & rhythmic ping-pong. |
+| **Netrunner Drone** | Drone | PWM hyper table, unison 8-voice super-detune & endless ambient reverb. |
+| **Cyber Glitch 64-Step** | Sequence | Full 64-step fast bitcrushed modular sequence with sliding viewport navigation. |
+| **Tactical Scanner** | Sequence | 64-step tactical scanner sweep with rhythmic bandpass filter modulation. |
+| **Orbital Space Station** | Pad | Dystopian metallic wavetable with slow 1.2s attack and deep diffusion reverb. |
+| **Subsurface 808** | Bass | Heavy sub-bass with soft analog saturation and pitch envelope punch. |
+| **Valkyrie Chime** | Lead | Digital FM bell harmonic wavetable with stereo ping-pong delay and wide chorus. |
 
 ---
 
-## 📦 Supported Formats
-
-| Format | Platform | Description |
-|---|---|---|
-| **VST3** | Linux, Windows, macOS | Standard Steinberg VST3 plugin |
-| **CLAP** | Linux, Windows, macOS | Modern Clever Audio Plugin with polyphonic modulation |
-| **AU (AudioUnit v2/v3)** | macOS | Apple AudioUnit format for Logic Pro, GarageBand |
-| **Standalone** | Linux, Windows, macOS | Standalone executable (ALSA, JACK, CoreAudio, WASAPI) |
-
----
-
-## 🛠️ Building From Source
+## 🛠️ Building & Packaging from Source
 
 ### Prerequisites
-- [Rust](https://rustup.rs/) (version 1.85 or newer).
-- Linux audio libraries (for Linux build):
+- [Rust 1.85+ (MSRV)](https://www.rust-lang.org/tools/install)
+- ALSA / JACK / OpenGL dev headers (Linux):
   ```bash
-  sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-xcb-dev
+  sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libjack-jackd2-dev
   ```
 
-### Build VST3 & CLAP
+### Build Everything
 ```bash
-cargo xtask bundle replicantwave --release
-```
-The bundles will be generated in `target/bundled/`:
-- `target/bundled/replicantwave.clap`
-- `target/bundled/replicantwave.vst3`
+# Clone the repository
+git clone https://github.com/DanimanX/ReplicantWave.git
+cd ReplicantWave
 
-### Build Standalone Executable
-```bash
+# Build release standalone executable and plugins
+cargo xtask bundle replicantwave --release
 cargo build --release --bin replicantwave-standalone
 ```
-Binary located at: `target/release/replicantwave-standalone`
 
-### Build macOS AudioUnit (AU)
-On macOS (or with `clap-wrapper`):
-```bash
-bash tools/build_au.sh
-```
-
-### Build All Formats Into Release Package
-```bash
-bash tools/package_all.sh
-```
+Compiled bundles will be generated in `target/bundled/`:
+- `target/bundled/replicantwave.vst3`
+- `target/bundled/replicantwave.clap`
+- `target/release/replicantwave-standalone`
 
 ---
 
 ## 📜 License
 
-MIT License - Copyright (c) 2026 Daniel Rojas (DanimanX). See [LICENSE](LICENSE) for details.
+ReplicantWave is licensed under the [MIT License](LICENSE).
+Created with ⚡ by Daniel Rojas (`daniel.rojas@chileatiende.cl`).

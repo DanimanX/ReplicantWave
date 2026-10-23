@@ -4,7 +4,7 @@
 use super::knob::{draw_rotary_knob, draw_rotary_knob_i8, draw_rotary_knob_u8, draw_rotary_knob_usize};
 use super::theme::CyberTheme;
 use crate::audio::step_sequencer::{SeqMode, SeqRate, Step, StepSequencer, MAX_STEPS};
-use nih_plug_egui::egui::{Button, Sense, Stroke, Ui, Vec2};
+use nih_plug_egui::egui::{pos2, Button, Color32, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 pub struct SequencerUiState {
     pub is_drawer_open: bool,
@@ -30,7 +30,7 @@ pub fn draw_sequencer_drawer(
     state: &mut SequencerUiState,
     active_step: usize,
 ) {
-    ui.group(|ui| {
+    let group_resp = ui.group(|ui| {
         ui.style_mut().visuals.widgets.inactive.bg_fill = CyberTheme::BG_PANEL;
 
         // Auto follow playhead across 64 steps (1-16, 17-32, 33-48, 49-64)
@@ -183,7 +183,7 @@ pub fn draw_sequencer_drawer(
             }
         });
 
-        ui.add_space(4.0);
+        ui.add_space(3.0);
 
         // 3. 64-STEP VIEWPORT NAVIGATION: ANALOG ROTARY DIAL & QUICK PAGE BUTTONS (NO SLIDERS/BARS)
         ui.horizontal(|ui| {
@@ -221,6 +221,68 @@ pub fn draw_sequencer_drawer(
 
         ui.add_space(2.0);
 
+        // 3B. 64-STEP OVERVIEW RADAR TIMELINE BAR (Interactive Overview matching new_ui.jpeg)
+        let radar_w = ui.available_width() - 8.0;
+        let (radar_rect, radar_resp) = ui.allocate_exact_size(Vec2::new(radar_w, 12.0), Sense::click_and_drag());
+        let r_painter = ui.painter();
+
+        // Background groove
+        r_painter.rect_filled(radar_rect, 2.0, Color32::from_rgb(10, 12, 18));
+        r_painter.rect_stroke(radar_rect, 2.0, Stroke::new(1.0_f32, CyberTheme::BORDER_DARK), StrokeKind::Inside);
+
+        // Click or drag to jump viewport to any step
+        if radar_resp.clicked() || radar_resp.dragged() {
+            if let Some(mouse_pos) = radar_resp.interact_pointer_pos() {
+                let frac = ((mouse_pos.x - radar_rect.min.x) / radar_rect.width()).clamp(0.0, 1.0);
+                let target_step = (frac * 64.0).floor() as f32;
+                state.sliding_bar_pos = target_step.clamp(0.0, 48.0);
+                state.auto_page_follow = false;
+            }
+        }
+
+        // Draw 64 mini step pips
+        let pip_w = (radar_rect.width() - 8.0) / 64.0;
+        for i in 0..64 {
+            let px = radar_rect.min.x + 4.0 + i as f32 * pip_w;
+            let py = radar_rect.min.y + 2.0;
+            let step = &seq.steps[i];
+            let is_in_len = i < seq.length;
+
+            let pip_col = if !is_in_len {
+                Color32::from_rgb(20, 22, 30)
+            } else if step.accent && step.gate {
+                CyberTheme::NEON_AMBER
+            } else if step.gate {
+                CyberTheme::NEON_CYAN
+            } else {
+                Color32::from_rgb(26, 30, 44)
+            };
+
+            r_painter.rect_filled(Rect::from_min_size(pos2(px, py), Vec2::new(pip_w - 0.8, 8.0)), 1.0, pip_col);
+        }
+
+        // Highlight current 16-step viewport bracket
+        let start_step_f = state.sliding_bar_pos.clamp(0.0, 48.0);
+        let vp_x0 = radar_rect.min.x + 4.0 + start_step_f * pip_w;
+        let vp_x1 = vp_x0 + 16.0 * pip_w;
+        r_painter.rect_stroke(
+            Rect::from_min_max(pos2(vp_x0, radar_rect.min.y + 1.0), pos2(vp_x1, radar_rect.max.y - 1.0)),
+            2.0,
+            Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(255, 210, 0, 190)),
+            StrokeKind::Outside,
+        );
+
+        // Highlight active playhead cursor
+        if seq.is_playback_running(true) {
+            let playhead_x = radar_rect.min.x + 4.0 + (active_step % seq.length.max(1)) as f32 * pip_w;
+            r_painter.line_segment(
+                [pos2(playhead_x, radar_rect.min.y), pos2(playhead_x, radar_rect.max.y)],
+                Stroke::new(2.0_f32, CyberTheme::NEON_LIME),
+            );
+        }
+
+        ui.add_space(2.0);
+
         // 4. 16 VISIBLE STEPS GRID: mapped from sliding_bar_pos
         let start_step = (state.sliding_bar_pos.round() as usize).min(48);
         let visible_count = 16;
@@ -250,6 +312,8 @@ pub fn draw_sequencer_drawer(
             }
         });
     });
+
+    CyberTheme::draw_panel_screws(ui.painter(), group_resp.response.rect);
 }
 
 fn draw_single_step_column(

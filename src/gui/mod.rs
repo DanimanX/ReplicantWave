@@ -17,7 +17,7 @@ use theme::CyberTheme;
 use wavetable_view::draw_wavetable_preview;
 
 use nih_plug_egui::egui::{
-    Button, Color32, ComboBox, RichText, Stroke, Ui,
+    pos2, Button, Color32, ComboBox, RichText, Sense, Stroke, StrokeKind, Ui, Vec2,
 };
 use parking_lot::Mutex;
 use std::sync::atomic::Ordering;
@@ -70,7 +70,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                     .size(10.0),
             );
 
-            ui.add_space(8.0);
+            ui.add_space(4.0);
 
             // Preset Selector
             if ui.button(RichText::new("◀").color(CyberTheme::NEON_CYAN)).clicked() {
@@ -85,7 +85,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
             let cur_name = state.presets[state.current_preset_idx].name.clone();
             ComboBox::from_id_salt("preset_combo")
                 .selected_text(RichText::new(&cur_name).color(CyberTheme::NEON_AMBER).strong())
-                .width(180.0)
+                .width(170.0)
                 .show_ui(ui, |ui| {
                     for (i, p) in state.presets.iter().enumerate() {
                         let text = format!("[{}] {}", p.category, p.name);
@@ -101,17 +101,17 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 state.presets[state.current_preset_idx].apply_to_engine(engine);
             }
 
-            ui.add_space(12.0);
+            ui.add_space(8.0);
 
             // Live Telemetry Readout
             let active_voices = engine.active_voice_count.load(Ordering::Relaxed);
             ui.label(
                 RichText::new(format!("VOICES: {:02}/16 | DSP: 64-BIT", active_voices))
                     .color(CyberTheme::NEON_LIME)
-                    .size(11.0),
+                    .size(10.5),
             );
 
-            ui.add_space(8.0);
+            ui.add_space(6.0);
 
             // Master 64-Step Pattern Sequencer Quick Toggle
             let seq_active = engine.sequencer.is_playback_running(true);
@@ -120,7 +120,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 RichText::new(seq_text)
                     .color(if seq_active { Color32::from_rgb(10, 11, 16) } else { CyberTheme::TEXT_PRIMARY })
                     .strong()
-                    .size(10.5),
+                    .size(10.0),
             )
             .fill(if seq_active { CyberTheme::NEON_LIME } else { CyberTheme::BG_RECESSED })
             .stroke(Stroke::new(1.0_f32, if seq_active { CyberTheme::NEON_LIME } else { CyberTheme::BORDER_DARK }));
@@ -135,12 +135,12 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 }
             }
 
-            ui.add_space(8.0);
+            ui.add_space(6.0);
 
             // Master Volume Analog Rotary Knob
             draw_rotary_knob(ui, &mut engine.master_gain, 0.0..=1.5, "MASTER", CyberTheme::NEON_AMBER);
 
-            ui.add_space(12.0);
+            ui.add_space(8.0);
 
             // =====================================================================
             // DONATION BUTTON (Required by user!)
@@ -149,7 +149,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 RichText::new("☕ DONATE / BUY ME A COFFEE")
                     .color(Color32::from_rgb(10, 11, 16))
                     .strong()
-                    .size(11.0),
+                    .size(10.5),
             )
             .fill(CyberTheme::NEON_AMBER)
             .stroke(Stroke::new(1.5_f32, Color32::WHITE));
@@ -157,368 +157,503 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
             if ui.add(donate_btn).clicked() {
                 let _ = open::that(DONATION_URL);
             }
+
+            // Top-right industrial telemetry stamp
+            ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new("EATA: 0.500006\nERROS: 0.00\nEXFTA: 01003100")
+                        .color(Color32::from_rgb(70, 80, 104))
+                        .size(8.0)
+                        .monospace(),
+                );
+            });
         });
 
-        ui.add_space(8.0);
+        ui.add_space(4.0);
         ui.separator();
+
+        // Coordinates for modular analog patch cables
+        let mut cable_jack_1: Option<nih_plug_egui::egui::Pos2> = None;
+        let mut cable_jack_2: Option<nih_plug_egui::egui::Pos2> = None;
+        let mut cable_dest_1: Option<nih_plug_egui::egui::Pos2> = None;
+        let mut cable_dest_2: Option<nih_plug_egui::egui::Pos2> = None;
 
         // =========================================================================
         // 2. MAIN DSP SYNTH PANELS (3 Columns)
         // =========================================================================
         ui.horizontal(|ui| {
             // ---------------------------------------------------------------------
-            // COLUMN 1: OSCILLATOR 1 & OSCILLATOR 2
+            // COLUMN 1: OSCILLATOR 1 & OSCILLATOR 2 (Eurorack Panel)
             // ---------------------------------------------------------------------
-            ui.group(|ui| {
+            let osc_resp = ui.group(|ui| {
                 ui.set_width(320.0);
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("⚡ OSCILLATORS").color(CyberTheme::NEON_CYAN).strong());
-
-                // --- OSC 1 ---
-                ui.group(|ui| {
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut engine.voices[0].osc1.enabled, "");
-                        ui.label(RichText::new("OSC 1:").color(CyberTheme::NEON_CYAN).strong());
+                        ui.label(RichText::new("⚡ OSCILLATORS").color(CyberTheme::NEON_CYAN).strong());
+                        ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
+                            ui.label(RichText::new("05M/ASEC//12AS05T").color(CyberTheme::TEXT_DIM).monospace().size(8.0));
+                        });
+                    });
 
-                        // Wavetable name selector
-                        let table_names = engine.bank.names();
-                        let mut cur_table = engine.voices[0].osc1_table_idx;
-                        ComboBox::from_id_salt("osc1_table_combo")
-                            .selected_text(table_names.get(cur_table).cloned().unwrap_or_default())
-                            .show_ui(ui, |ui| {
-                                for (i, name) in table_names.iter().enumerate() {
-                                    if ui.selectable_value(&mut cur_table, i, name).clicked() {
-                                        for v in engine.voices.iter_mut() {
-                                            v.osc1_table_idx = cur_table;
+                    // --- OSC 1 ---
+                    let osc1_resp = ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut engine.voices[0].osc1.enabled, "");
+                            ui.label(RichText::new("OSC 1:").color(CyberTheme::NEON_CYAN).strong());
+
+                            // Wavetable name selector
+                            let table_names = engine.bank.names();
+                            let mut cur_table = engine.voices[0].osc1_table_idx;
+                            ComboBox::from_id_salt("osc1_table_combo")
+                                .selected_text(table_names.get(cur_table).cloned().unwrap_or_default())
+                                .show_ui(ui, |ui| {
+                                    for (i, name) in table_names.iter().enumerate() {
+                                        if ui.selectable_value(&mut cur_table, i, name).clicked() {
+                                            for v in engine.voices.iter_mut() {
+                                                v.osc1_table_idx = cur_table;
+                                            }
                                         }
                                     }
-                                }
-                            });
+                                });
+                        });
+
+                        // 3D GPU Holographic Wavetable Preview
+                        let cur_wt1 = engine.bank.get_table(engine.voices[0].osc1_table_idx);
+                        let cur_pos1 = engine.voices[0].osc1.position;
+                        draw_wavetable_preview(ui, cur_wt1, cur_pos1, CyberTheme::NEON_CYAN, 296.0, 68.0);
+
+                        // Osc 1 Rotary Knobs (Row 1: POS, TUNE, UNISON, DETUNE)
+                        ui.horizontal(|ui| {
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.position, 0.0..=1.0, "POS", CyberTheme::NEON_CYAN).changed() {
+                                let val = engine.voices[0].osc1.position;
+                                for v in engine.voices.iter_mut() { v.osc1.position = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.tune_semitones, -36.0..=36.0, "TUNE", CyberTheme::NEON_CYAN).changed() {
+                                let val = engine.voices[0].osc1.tune_semitones;
+                                for v in engine.voices.iter_mut() { v.osc1.tune_semitones = val; }
+                            }
+                            if draw_rotary_knob_usize(ui, &mut engine.voices[0].osc1.unison, 1..=8, "UNISON", CyberTheme::NEON_CYAN).changed() {
+                                let val = engine.voices[0].osc1.unison;
+                                for v in engine.voices.iter_mut() { v.osc1.unison = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.detune, 0.0..=1.0, "DETUNE", CyberTheme::NEON_CYAN).changed() {
+                                let val = engine.voices[0].osc1.detune;
+                                for v in engine.voices.iter_mut() { v.osc1.detune = val; }
+                            }
+                        });
+
+                        // Osc 1 Rotary Knobs (Row 2: LEVEL, SPREAD, FORMANT, BEND)
+                        ui.horizontal(|ui| {
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.level_gain, 0.0..=1.5, "LEVEL", CyberTheme::NEON_CYAN).changed() {
+                                let val = engine.voices[0].osc1.level_gain;
+                                for v in engine.voices.iter_mut() { v.osc1.level_gain = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.spread, 0.0..=1.0, "SPREAD", CyberTheme::NEON_CYAN).changed() {
+                                let val = engine.voices[0].osc1.spread;
+                                for v in engine.voices.iter_mut() { v.osc1.spread = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.formant, -1.0..=1.0, "FORMANT", CyberTheme::NEON_CYAN).changed() {
+                                let val = engine.voices[0].osc1.formant;
+                                for v in engine.voices.iter_mut() { v.osc1.formant = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.bend, -1.0..=1.0, "BEND", CyberTheme::NEON_CYAN).changed() {
+                                let val = engine.voices[0].osc1.bend;
+                                for v in engine.voices.iter_mut() { v.osc1.bend = val; }
+                            }
+                        });
                     });
 
-                    // Wavetable Morph Preview
-                    let cur_wt1 = engine.bank.get_table(engine.voices[0].osc1_table_idx);
-                    let cur_pos1 = engine.voices[0].osc1.position;
-                    draw_wavetable_preview(ui, cur_wt1, cur_pos1, CyberTheme::NEON_CYAN, 296.0, 68.0);
+                    cable_jack_1 = Some(pos2(osc1_resp.response.rect.max.x - 14.0, osc1_resp.response.rect.center().y + 24.0));
 
-                    // Osc 1 Rotary Knobs (Row 1: POS, TUNE, UNISON, DETUNE)
-                    ui.horizontal(|ui| {
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.position, 0.0..=1.0, "POS", CyberTheme::NEON_CYAN).changed() {
-                            let val = engine.voices[0].osc1.position;
-                            for v in engine.voices.iter_mut() { v.osc1.position = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.tune_semitones, -36.0..=36.0, "TUNE", CyberTheme::NEON_CYAN).changed() {
-                            let val = engine.voices[0].osc1.tune_semitones;
-                            for v in engine.voices.iter_mut() { v.osc1.tune_semitones = val; }
-                        }
-                        if draw_rotary_knob_usize(ui, &mut engine.voices[0].osc1.unison, 1..=8, "UNISON", CyberTheme::NEON_CYAN).changed() {
-                            let val = engine.voices[0].osc1.unison;
-                            for v in engine.voices.iter_mut() { v.osc1.unison = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.detune, 0.0..=1.0, "DETUNE", CyberTheme::NEON_CYAN).changed() {
-                            let val = engine.voices[0].osc1.detune;
-                            for v in engine.voices.iter_mut() { v.osc1.detune = val; }
-                        }
-                    });
+                    ui.add_space(2.0);
 
-                    // Osc 1 Rotary Knobs (Row 2: LEVEL, SPREAD, FORMANT, BEND)
-                    ui.horizontal(|ui| {
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.level_gain, 0.0..=1.5, "LEVEL", CyberTheme::NEON_CYAN).changed() {
-                            let val = engine.voices[0].osc1.level_gain;
-                            for v in engine.voices.iter_mut() { v.osc1.level_gain = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.spread, 0.0..=1.0, "SPREAD", CyberTheme::NEON_CYAN).changed() {
-                            let val = engine.voices[0].osc1.spread;
-                            for v in engine.voices.iter_mut() { v.osc1.spread = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.formant, -1.0..=1.0, "FORMANT", CyberTheme::NEON_CYAN).changed() {
-                            let val = engine.voices[0].osc1.formant;
-                            for v in engine.voices.iter_mut() { v.osc1.formant = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.bend, -1.0..=1.0, "BEND", CyberTheme::NEON_CYAN).changed() {
-                            let val = engine.voices[0].osc1.bend;
-                            for v in engine.voices.iter_mut() { v.osc1.bend = val; }
-                        }
-                    });
-                });
+                    // --- OSC 2 ---
+                    let osc2_resp = ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut engine.voices[0].osc2.enabled, "");
+                            ui.label(RichText::new("OSC 2:").color(CyberTheme::NEON_PINK).strong());
 
-                ui.add_space(4.0);
-
-                // --- OSC 2 ---
-                ui.group(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut engine.voices[0].osc2.enabled, "");
-                        ui.label(RichText::new("OSC 2:").color(CyberTheme::NEON_PINK).strong());
-
-                        let table_names = engine.bank.names();
-                        let mut cur_table = engine.voices[0].osc2_table_idx;
-                        ComboBox::from_id_salt("osc2_table_combo")
-                            .selected_text(table_names.get(cur_table).cloned().unwrap_or_default())
-                            .show_ui(ui, |ui| {
-                                for (i, name) in table_names.iter().enumerate() {
-                                    if ui.selectable_value(&mut cur_table, i, name).clicked() {
-                                        for v in engine.voices.iter_mut() {
-                                            v.osc2_table_idx = cur_table;
+                            let table_names = engine.bank.names();
+                            let mut cur_table = engine.voices[0].osc2_table_idx;
+                            ComboBox::from_id_salt("osc2_table_combo")
+                                .selected_text(table_names.get(cur_table).cloned().unwrap_or_default())
+                                .show_ui(ui, |ui| {
+                                    for (i, name) in table_names.iter().enumerate() {
+                                        if ui.selectable_value(&mut cur_table, i, name).clicked() {
+                                            for v in engine.voices.iter_mut() {
+                                                v.osc2_table_idx = cur_table;
+                                            }
                                         }
                                     }
-                                }
-                            });
+                                });
+                        });
+
+                        let cur_wt2 = engine.bank.get_table(engine.voices[0].osc2_table_idx);
+                        let cur_pos2 = engine.voices[0].osc2.position;
+                        draw_wavetable_preview(ui, cur_wt2, cur_pos2, CyberTheme::NEON_PINK, 296.0, 68.0);
+
+                        // Osc 2 Rotary Knobs (Row 1: POS, TUNE, UNISON, DETUNE)
+                        ui.horizontal(|ui| {
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.position, 0.0..=1.0, "POS", CyberTheme::NEON_PINK).changed() {
+                                let val = engine.voices[0].osc2.position;
+                                for v in engine.voices.iter_mut() { v.osc2.position = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.tune_semitones, -36.0..=36.0, "TUNE", CyberTheme::NEON_PINK).changed() {
+                                let val = engine.voices[0].osc2.tune_semitones;
+                                for v in engine.voices.iter_mut() { v.osc2.tune_semitones = val; }
+                            }
+                            if draw_rotary_knob_usize(ui, &mut engine.voices[0].osc2.unison, 1..=8, "UNISON", CyberTheme::NEON_PINK).changed() {
+                                let val = engine.voices[0].osc2.unison;
+                                for v in engine.voices.iter_mut() { v.osc2.unison = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.detune, 0.0..=1.0, "DETUNE", CyberTheme::NEON_PINK).changed() {
+                                let val = engine.voices[0].osc2.detune;
+                                for v in engine.voices.iter_mut() { v.osc2.detune = val; }
+                            }
+                        });
+
+                        // Osc 2 Rotary Knobs (Row 2: LEVEL, SPREAD, FORMANT, BEND)
+                        ui.horizontal(|ui| {
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.level_gain, 0.0..=1.5, "LEVEL", CyberTheme::NEON_PINK).changed() {
+                                let val = engine.voices[0].osc2.level_gain;
+                                for v in engine.voices.iter_mut() { v.osc2.level_gain = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.spread, 0.0..=1.0, "SPREAD", CyberTheme::NEON_PINK).changed() {
+                                let val = engine.voices[0].osc2.spread;
+                                for v in engine.voices.iter_mut() { v.osc2.spread = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.formant, -1.0..=1.0, "FORMANT", CyberTheme::NEON_PINK).changed() {
+                                let val = engine.voices[0].osc2.formant;
+                                for v in engine.voices.iter_mut() { v.osc2.formant = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.bend, -1.0..=1.0, "BEND", CyberTheme::NEON_PINK).changed() {
+                                let val = engine.voices[0].osc2.bend;
+                                for v in engine.voices.iter_mut() { v.osc2.bend = val; }
+                            }
+                        });
                     });
 
-                    let cur_wt2 = engine.bank.get_table(engine.voices[0].osc2_table_idx);
-                    let cur_pos2 = engine.voices[0].osc2.position;
-                    draw_wavetable_preview(ui, cur_wt2, cur_pos2, CyberTheme::NEON_PINK, 296.0, 68.0);
-
-                    // Osc 2 Rotary Knobs (Row 1: POS, TUNE, UNISON, DETUNE)
-                    ui.horizontal(|ui| {
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.position, 0.0..=1.0, "POS", CyberTheme::NEON_PINK).changed() {
-                            let val = engine.voices[0].osc2.position;
-                            for v in engine.voices.iter_mut() { v.osc2.position = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.tune_semitones, -36.0..=36.0, "TUNE", CyberTheme::NEON_PINK).changed() {
-                            let val = engine.voices[0].osc2.tune_semitones;
-                            for v in engine.voices.iter_mut() { v.osc2.tune_semitones = val; }
-                        }
-                        if draw_rotary_knob_usize(ui, &mut engine.voices[0].osc2.unison, 1..=8, "UNISON", CyberTheme::NEON_PINK).changed() {
-                            let val = engine.voices[0].osc2.unison;
-                            for v in engine.voices.iter_mut() { v.osc2.unison = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.detune, 0.0..=1.0, "DETUNE", CyberTheme::NEON_PINK).changed() {
-                            let val = engine.voices[0].osc2.detune;
-                            for v in engine.voices.iter_mut() { v.osc2.detune = val; }
-                        }
-                    });
-
-                    // Osc 2 Rotary Knobs (Row 2: LEVEL, SPREAD, FORMANT, BEND)
-                    ui.horizontal(|ui| {
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.level_gain, 0.0..=1.5, "LEVEL", CyberTheme::NEON_PINK).changed() {
-                            let val = engine.voices[0].osc2.level_gain;
-                            for v in engine.voices.iter_mut() { v.osc2.level_gain = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.spread, 0.0..=1.0, "SPREAD", CyberTheme::NEON_PINK).changed() {
-                            let val = engine.voices[0].osc2.spread;
-                            for v in engine.voices.iter_mut() { v.osc2.spread = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.formant, -1.0..=1.0, "FORMANT", CyberTheme::NEON_PINK).changed() {
-                            let val = engine.voices[0].osc2.formant;
-                            for v in engine.voices.iter_mut() { v.osc2.formant = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.bend, -1.0..=1.0, "BEND", CyberTheme::NEON_PINK).changed() {
-                            let val = engine.voices[0].osc2.bend;
-                            for v in engine.voices.iter_mut() { v.osc2.bend = val; }
-                        }
-                    });
-                });
+                    cable_jack_2 = Some(pos2(osc2_resp.response.rect.max.x - 14.0, osc2_resp.response.rect.center().y + 24.0));
                 });
             });
+
+            CyberTheme::draw_panel_screws(ui.painter(), osc_resp.response.rect);
 
             // ---------------------------------------------------------------------
             // COLUMN 2: MULTIMODE FILTER, SUB/NOISE, AND LIVE OSCILLOSCOPE
             // ---------------------------------------------------------------------
-            ui.group(|ui| {
+            let col2_resp = ui.group(|ui| {
                 ui.set_width(330.0);
                 ui.vertical(|ui| {
                     // Live Oscilloscope Display
-                    ui.label(RichText::new("⚡ NEON OSCILLOSCOPE").color(CyberTheme::NEON_CYAN).strong());
-                let samples: Vec<f32> = {
-                    let scope = engine.scope_data.lock();
-                    scope.buffer.to_vec()
-                };
-                draw_oscilloscope(ui, &samples, 310.0, 72.0);
-
-                ui.add_space(4.0);
-
-                // Multimode Filter
-                ui.group(|ui| {
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut engine.voices[0].filter.enabled, "");
-                        ui.label(RichText::new("MULTIMODE FILTER").color(CyberTheme::NEON_AMBER).strong());
+                        ui.label(RichText::new("⚡ NEON OSCILLOSCOPE").color(CyberTheme::NEON_CYAN).strong());
+                        ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
+                            ui.label(RichText::new("DEP VECTOR // 64-BIT").color(CyberTheme::TEXT_DIM).monospace().size(8.0));
+                        });
+                    });
 
-                        let f_types = ["LP 12", "LP 24", "HP 12", "HP 24", "BP 12", "BP 24", "NOTCH"];
-                        let mut cur_type = match engine.voices[0].filter.filter_type {
-                            FilterType::LowPass12 => 0,
-                            FilterType::LowPass24 => 1,
-                            FilterType::HighPass12 => 2,
-                            FilterType::HighPass24 => 3,
-                            FilterType::BandPass12 => 4,
-                            FilterType::BandPass24 => 5,
-                            FilterType::Notch => 6,
-                        };
+                    let samples: Vec<f32> = {
+                        let scope = engine.scope_data.lock();
+                        scope.buffer.to_vec()
+                    };
+                    draw_oscilloscope(ui, &samples, 310.0, 70.0);
 
-                        ComboBox::from_id_salt("flt_type_combo")
-                            .selected_text(f_types[cur_type])
-                            .show_ui(ui, |ui| {
-                                for (i, &name) in f_types.iter().enumerate() {
-                                    if ui.selectable_value(&mut cur_type, i, name).clicked() {
-                                        let ft = FilterType::from_index(cur_type);
-                                        for v in engine.voices.iter_mut() { v.filter.filter_type = ft; }
+                    ui.add_space(3.0);
+
+                    // Multimode Filter
+                    let flt_resp = ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut engine.voices[0].filter.enabled, "");
+                            ui.label(RichText::new("MULTIMODE FILTER").color(CyberTheme::NEON_AMBER).strong());
+
+                            let f_types = ["LP 12", "LP 24", "HP 12", "HP 24", "BP 12", "BP 24", "NOTCH"];
+                            let mut cur_type = match engine.voices[0].filter.filter_type {
+                                FilterType::LowPass12 => 0,
+                                FilterType::LowPass24 => 1,
+                                FilterType::HighPass12 => 2,
+                                FilterType::HighPass24 => 3,
+                                FilterType::BandPass12 => 4,
+                                FilterType::BandPass24 => 5,
+                                FilterType::Notch => 6,
+                            };
+
+                            ComboBox::from_id_salt("flt_type_combo")
+                                .selected_text(f_types[cur_type])
+                                .show_ui(ui, |ui| {
+                                    for (i, &name) in f_types.iter().enumerate() {
+                                        if ui.selectable_value(&mut cur_type, i, name).clicked() {
+                                            let ft = FilterType::from_index(cur_type);
+                                            for v in engine.voices.iter_mut() { v.filter.filter_type = ft; }
+                                        }
                                     }
-                                }
-                            });
+                                });
+                        });
+
+                        // Filter Analog Rotary Knobs (Row 1: CUTOFF, RESO, DRIVE, ENV MOD)
+                        ui.horizontal(|ui| {
+                            if draw_rotary_knob_log(ui, &mut engine.voices[0].filter.cutoff_hz, 20.0..=18000.0, "CUTOFF", CyberTheme::NEON_AMBER).changed() {
+                                let val = engine.voices[0].filter.cutoff_hz;
+                                for v in engine.voices.iter_mut() { v.filter.cutoff_hz = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].filter.resonance, 0.0..=1.0, "RESO", CyberTheme::NEON_AMBER).changed() {
+                                let val = engine.voices[0].filter.resonance;
+                                for v in engine.voices.iter_mut() { v.filter.resonance = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].filter.drive, 1.0..=4.0, "DRIVE", CyberTheme::NEON_AMBER).changed() {
+                                let val = engine.voices[0].filter.drive;
+                                for v in engine.voices.iter_mut() { v.filter.drive = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].filter.env_amount, -1.0..=1.0, "ENV MOD", CyberTheme::NEON_AMBER).changed() {
+                                let val = engine.voices[0].filter.env_amount;
+                                for v in engine.voices.iter_mut() { v.filter.env_amount = val; }
+                            }
+                        });
+
+                        // Routing Toggles
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("ROUTE:").color(CyberTheme::TEXT_MUTED).size(10.0));
+                            if ui.checkbox(&mut engine.voices[0].filter.route_osc1, "OSC1").changed() {
+                                let b = engine.voices[0].filter.route_osc1;
+                                for v in engine.voices.iter_mut() { v.filter.route_osc1 = b; }
+                            }
+                            if ui.checkbox(&mut engine.voices[0].filter.route_osc2, "OSC2").changed() {
+                                let b = engine.voices[0].filter.route_osc2;
+                                for v in engine.voices.iter_mut() { v.filter.route_osc2 = b; }
+                            }
+                            if ui.checkbox(&mut engine.voices[0].filter.route_sub, "SUB").changed() {
+                                let b = engine.voices[0].filter.route_sub;
+                                for v in engine.voices.iter_mut() { v.filter.route_sub = b; }
+                            }
+                        });
                     });
 
-                    // Filter Analog Rotary Knobs (Row 1: CUTOFF, RESO, DRIVE, ENV MOD)
-                    ui.horizontal(|ui| {
-                        if draw_rotary_knob_log(ui, &mut engine.voices[0].filter.cutoff_hz, 20.0..=18000.0, "CUTOFF", CyberTheme::NEON_AMBER).changed() {
-                            let val = engine.voices[0].filter.cutoff_hz;
-                            for v in engine.voices.iter_mut() { v.filter.cutoff_hz = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].filter.resonance, 0.0..=1.0, "RESO", CyberTheme::NEON_AMBER).changed() {
-                            let val = engine.voices[0].filter.resonance;
-                            for v in engine.voices.iter_mut() { v.filter.resonance = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].filter.drive, 1.0..=4.0, "DRIVE", CyberTheme::NEON_AMBER).changed() {
-                            let val = engine.voices[0].filter.drive;
-                            for v in engine.voices.iter_mut() { v.filter.drive = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].filter.env_amount, -1.0..=1.0, "ENV MOD", CyberTheme::NEON_AMBER).changed() {
-                            let val = engine.voices[0].filter.env_amount;
-                            for v in engine.voices.iter_mut() { v.filter.env_amount = val; }
-                        }
+                    cable_dest_1 = Some(pos2(flt_resp.response.rect.min.x + 8.0, flt_resp.response.rect.center().y - 10.0));
+
+                    ui.add_space(3.0);
+
+                    // Sub Oscillator & Noise Generator
+                    let sub_resp = ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut engine.voices[0].sub.enabled, "");
+                            ui.label(RichText::new("SUB OSC:").color(CyberTheme::NEON_LIME).strong().size(11.0));
+                            if draw_rotary_knob(ui, &mut engine.voices[0].sub.level_gain, 0.0..=1.0, "SUB LVL", CyberTheme::NEON_LIME).changed() {
+                                let val = engine.voices[0].sub.level_gain;
+                                for v in engine.voices.iter_mut() { v.sub.level_gain = val; }
+                            }
+
+                            ui.add_space(14.0);
+
+                            ui.checkbox(&mut engine.voices[0].noise.enabled, "");
+                            ui.label(RichText::new("NOISE:").color(CyberTheme::TEXT_MUTED).strong().size(11.0));
+                            if draw_rotary_knob(ui, &mut engine.voices[0].noise.level_gain, 0.0..=1.0, "NOISE LVL", CyberTheme::TEXT_MUTED).changed() {
+                                let val = engine.voices[0].noise.level_gain;
+                                for v in engine.voices.iter_mut() { v.noise.level_gain = val; }
+                            }
+                        });
                     });
 
-                    // Routing Toggles
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("ROUTE:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.checkbox(&mut engine.voices[0].filter.route_osc1, "OSC1").changed() {
-                            let b = engine.voices[0].filter.route_osc1;
-                            for v in engine.voices.iter_mut() { v.filter.route_osc1 = b; }
-                        }
-                        if ui.checkbox(&mut engine.voices[0].filter.route_osc2, "OSC2").changed() {
-                            let b = engine.voices[0].filter.route_osc2;
-                            for v in engine.voices.iter_mut() { v.filter.route_osc2 = b; }
-                        }
-                        if ui.checkbox(&mut engine.voices[0].filter.route_sub, "SUB").changed() {
-                            let b = engine.voices[0].filter.route_sub;
-                            for v in engine.voices.iter_mut() { v.filter.route_sub = b; }
-                        }
-                    });
-                });
-
-                ui.add_space(4.0);
-
-                // Sub Oscillator & Noise Generator
-                ui.group(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut engine.voices[0].sub.enabled, "");
-                        ui.label(RichText::new("SUB OSC:").color(CyberTheme::NEON_LIME).strong().size(11.0));
-                        if draw_rotary_knob(ui, &mut engine.voices[0].sub.level_gain, 0.0..=1.0, "SUB LVL", CyberTheme::NEON_LIME).changed() {
-                            let val = engine.voices[0].sub.level_gain;
-                            for v in engine.voices.iter_mut() { v.sub.level_gain = val; }
-                        }
-
-                        ui.add_space(14.0);
-
-                        ui.checkbox(&mut engine.voices[0].noise.enabled, "");
-                        ui.label(RichText::new("NOISE:").color(CyberTheme::TEXT_MUTED).strong().size(11.0));
-                        if draw_rotary_knob(ui, &mut engine.voices[0].noise.level_gain, 0.0..=1.0, "NOISE LVL", CyberTheme::TEXT_MUTED).changed() {
-                            let val = engine.voices[0].noise.level_gain;
-                            for v in engine.voices.iter_mut() { v.noise.level_gain = val; }
-                        }
-                    });
-                });
+                    cable_dest_2 = Some(pos2(sub_resp.response.rect.min.x + 8.0, sub_resp.response.rect.center().y));
                 });
             });
 
+            CyberTheme::draw_panel_screws(ui.painter(), col2_resp.response.rect);
+
             // ---------------------------------------------------------------------
-            // COLUMN 3: ENVELOPES & CYBERPUNK FX CHAIN
+            // COLUMN 3: ENVELOPES & CYBERPUNK FX CHAIN WITH REAL-TIME MONITORS
             // ---------------------------------------------------------------------
-            ui.group(|ui| {
+            let col3_resp = ui.group(|ui| {
                 ui.set_width(330.0);
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("⚡ MODULATION & FX").color(CyberTheme::NEON_PURPLE).strong());
-
-                // Amp ADSR
-                ui.group(|ui| {
-                    ui.label(RichText::new("AMP ADSR ENVELOPE").color(CyberTheme::TEXT_PRIMARY).strong().size(11.0));
                     ui.horizontal(|ui| {
-                        if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.attack_s, 0.001..=5.0, "ATTACK", CyberTheme::NEON_PURPLE).changed() {
-                            let val = engine.voices[0].amp_env.attack_s;
-                            for v in engine.voices.iter_mut() { v.amp_env.attack_s = val; }
-                        }
-                        if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.decay_s, 0.01..=5.0, "DECAY", CyberTheme::NEON_PURPLE).changed() {
-                            let val = engine.voices[0].amp_env.decay_s;
-                            for v in engine.voices.iter_mut() { v.amp_env.decay_s = val; }
-                        }
-                        if draw_rotary_knob(ui, &mut engine.voices[0].amp_env.sustain_level, 0.0..=1.0, "SUSTAIN", CyberTheme::NEON_PURPLE).changed() {
-                            let val = engine.voices[0].amp_env.sustain_level;
-                            for v in engine.voices.iter_mut() { v.amp_env.sustain_level = val; }
-                        }
-                        if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.release_s, 0.01..=5.0, "RELEASE", CyberTheme::NEON_PURPLE).changed() {
-                            let val = engine.voices[0].amp_env.release_s;
-                            for v in engine.voices.iter_mut() { v.amp_env.release_s = val; }
-                        }
+                        ui.label(RichText::new("⚡ MODULATION & FX").color(CyberTheme::NEON_PURPLE).strong());
+                        ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
+                            ui.label(RichText::new("FX MATRIX // DUAL").color(CyberTheme::TEXT_DIM).monospace().size(8.0));
+                        });
                     });
-                });
 
-                // FX Section
-                ui.group(|ui| {
-                    ui.label(RichText::new("FX PROCESSORS").color(CyberTheme::NEON_CYAN).strong().size(11.0));
+                    // Amp ADSR
+                    ui.group(|ui| {
+                        ui.label(RichText::new("AMP ADSR ENVELOPE").color(CyberTheme::TEXT_PRIMARY).strong().size(11.0));
+                        ui.horizontal(|ui| {
+                            if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.attack_s, 0.001..=5.0, "ATTACK", CyberTheme::NEON_PURPLE).changed() {
+                                let val = engine.voices[0].amp_env.attack_s;
+                                for v in engine.voices.iter_mut() { v.amp_env.attack_s = val; }
+                            }
+                            if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.decay_s, 0.01..=5.0, "DECAY", CyberTheme::NEON_PURPLE).changed() {
+                                let val = engine.voices[0].amp_env.decay_s;
+                                for v in engine.voices.iter_mut() { v.amp_env.decay_s = val; }
+                            }
+                            if draw_rotary_knob(ui, &mut engine.voices[0].amp_env.sustain_level, 0.0..=1.0, "SUSTAIN", CyberTheme::NEON_PURPLE).changed() {
+                                let val = engine.voices[0].amp_env.sustain_level;
+                                for v in engine.voices.iter_mut() { v.amp_env.sustain_level = val; }
+                            }
+                            if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.release_s, 0.01..=5.0, "RELEASE", CyberTheme::NEON_PURPLE).changed() {
+                                let val = engine.voices[0].amp_env.release_s;
+                                for v in engine.voices.iter_mut() { v.amp_env.release_s = val; }
+                            }
+                        });
+                    });
 
-                    // Distortion
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut engine.fx.distortion.enabled, "");
-                        ui.label(RichText::new("DIST:").size(10.0).color(CyberTheme::NEON_PINK));
-                        let dist_modes = ["OVERDRIVE", "CRUSHER", "FIRE", "GRIND"];
-                        let mut cur_dm = match engine.fx.distortion.mode {
-                            DistortionMode::SoftOverdrive => 0,
-                            DistortionMode::BitCrusher => 1,
-                            DistortionMode::FireAmp => 2,
-                            DistortionMode::GrindAmp => 3,
-                        };
-                        ComboBox::from_id_salt("dist_mode_combo")
-                            .selected_text(dist_modes[cur_dm])
-                            .width(82.0)
-                            .show_ui(ui, |ui| {
-                                for (i, &name) in dist_modes.iter().enumerate() {
-                                    if ui.selectable_value(&mut cur_dm, i, name).clicked() {
-                                        engine.fx.distortion.mode = DistortionMode::from_index(cur_dm);
+                    // FX Section with Mini Real-Time Response Monitors
+                    ui.group(|ui| {
+                        ui.label(RichText::new("FX PROCESSORS").color(CyberTheme::NEON_CYAN).strong().size(11.0));
+
+                        // Distortion
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut engine.fx.distortion.enabled, "");
+                            ui.label(RichText::new("DIST:").size(10.0).color(CyberTheme::NEON_PINK));
+                            let dist_modes = ["OVERDRIVE", "CRUSHER", "FIRE", "GRIND"];
+                            let mut cur_dm = match engine.fx.distortion.mode {
+                                DistortionMode::SoftOverdrive => 0,
+                                DistortionMode::BitCrusher => 1,
+                                DistortionMode::FireAmp => 2,
+                                DistortionMode::GrindAmp => 3,
+                            };
+                            ComboBox::from_id_salt("dist_mode_combo")
+                                .selected_text(dist_modes[cur_dm])
+                                .width(78.0)
+                                .show_ui(ui, |ui| {
+                                    for (i, &name) in dist_modes.iter().enumerate() {
+                                        if ui.selectable_value(&mut cur_dm, i, name).clicked() {
+                                            engine.fx.distortion.mode = DistortionMode::from_index(cur_dm);
+                                        }
                                     }
-                                }
-                            });
-                        draw_rotary_knob(ui, &mut engine.fx.distortion.amount, 0.0..=1.0, "DRIVE", CyberTheme::NEON_PINK);
-                    });
+                                });
+                            draw_rotary_knob(ui, &mut engine.fx.distortion.amount, 0.0..=1.0, "DRIVE", CyberTheme::NEON_PINK);
+                            draw_mini_fx_monitor(ui, 0, CyberTheme::NEON_PINK, engine.fx.distortion.enabled);
+                        });
 
-                    // Chorus
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut engine.fx.chorus.enabled, "");
-                        ui.label(RichText::new("CHORUS:").size(10.0).color(CyberTheme::NEON_CYAN));
-                        draw_rotary_knob(ui, &mut engine.fx.chorus.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_CYAN);
-                        draw_rotary_knob(ui, &mut engine.fx.chorus.rate_hz, 0.1..=8.0, "RATE", CyberTheme::NEON_CYAN);
-                    });
+                        // Chorus
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut engine.fx.chorus.enabled, "");
+                            ui.label(RichText::new("CHORUS:").size(10.0).color(CyberTheme::NEON_CYAN));
+                            draw_rotary_knob(ui, &mut engine.fx.chorus.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_CYAN);
+                            draw_rotary_knob(ui, &mut engine.fx.chorus.rate_hz, 0.1..=8.0, "RATE", CyberTheme::NEON_CYAN);
+                            draw_mini_fx_monitor(ui, 1, CyberTheme::NEON_CYAN, engine.fx.chorus.enabled);
+                        });
 
-                    // Delay
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut engine.fx.delay.enabled, "");
-                        ui.label(RichText::new("P-P DELAY:").size(10.0).color(CyberTheme::NEON_AMBER));
-                        draw_rotary_knob(ui, &mut engine.fx.delay.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_AMBER);
-                        draw_rotary_knob(ui, &mut engine.fx.delay.feedback, 0.0..=0.9, "FDBK", CyberTheme::NEON_AMBER);
-                    });
+                        // Delay
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut engine.fx.delay.enabled, "");
+                            ui.label(RichText::new("P-P DELAY:").size(10.0).color(CyberTheme::NEON_AMBER));
+                            draw_rotary_knob(ui, &mut engine.fx.delay.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_AMBER);
+                            draw_rotary_knob(ui, &mut engine.fx.delay.feedback, 0.0..=0.9, "FDBK", CyberTheme::NEON_AMBER);
+                            draw_mini_fx_monitor(ui, 2, CyberTheme::NEON_AMBER, engine.fx.delay.enabled);
+                        });
 
-                    // Reverb
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut engine.fx.reverb.enabled, "");
-                        ui.label(RichText::new("REVERB:").size(10.0).color(CyberTheme::NEON_PURPLE));
-                        draw_rotary_knob(ui, &mut engine.fx.reverb.room_size, 0.0..=1.0, "ROOM", CyberTheme::NEON_PURPLE);
-                        draw_rotary_knob(ui, &mut engine.fx.reverb.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_PURPLE);
-                    });
+                        // Reverb
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut engine.fx.reverb.enabled, "");
+                            ui.label(RichText::new("REVERB:").size(10.0).color(CyberTheme::NEON_PURPLE));
+                            draw_rotary_knob(ui, &mut engine.fx.reverb.room_size, 0.0..=1.0, "ROOM", CyberTheme::NEON_PURPLE);
+                            draw_rotary_knob(ui, &mut engine.fx.reverb.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_PURPLE);
+                            draw_mini_fx_monitor(ui, 3, CyberTheme::NEON_PURPLE, engine.fx.reverb.enabled);
+                        });
 
-                    // Trance Gate
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut engine.fx.gate.enabled, "");
-                        ui.label(RichText::new("TRANCE GATE (CHOPPER)").size(10.0).color(CyberTheme::NEON_LIME));
+                        // Trance Gate
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut engine.fx.gate.enabled, "");
+                            ui.label(RichText::new("TRANCE GATE (CHOPPER)").size(10.0).color(CyberTheme::NEON_LIME));
+                        });
                     });
-                });
                 });
             });
+
+            CyberTheme::draw_panel_screws(ui.painter(), col3_resp.response.rect);
         });
 
-        ui.add_space(6.0);
+        // =========================================================================
+        // 2B. MODULAR ANALOG PATCH CABLES OVERLAY
+        // =========================================================================
+        let painter = ui.painter();
+        if let (Some(j1), Some(d1)) = (cable_jack_1, cable_dest_1) {
+            CyberTheme::draw_patch_socket(painter, j1, CyberTheme::NEON_CYAN);
+            CyberTheme::draw_patch_socket(painter, d1, CyberTheme::NEON_CYAN);
+            CyberTheme::draw_patch_cable(painter, j1, d1, CyberTheme::NEON_CYAN);
+        }
+
+        if let (Some(j2), Some(d2)) = (cable_jack_2, cable_dest_2) {
+            CyberTheme::draw_patch_socket(painter, j2, CyberTheme::NEON_PINK);
+            CyberTheme::draw_patch_socket(painter, d2, CyberTheme::NEON_PINK);
+            CyberTheme::draw_patch_cable(painter, j2, d2, CyberTheme::NEON_PINK);
+        }
+
+        ui.add_space(4.0);
 
         // =========================================================================
-        // 3. STEP SEQUENCER DRAWER (UP TO 64 STEPS WITH SLIDING BAR)
+        // 3. STEP SEQUENCER DRAWER (64 STEPS WITH ROTARY DIAL & MINI OVERVIEW RADAR)
         // =========================================================================
         let active_step = engine.sequencer.current_step;
         draw_sequencer_drawer(ui, &mut engine.sequencer, &mut state.seq_ui_state, active_step);
     });
+}
+
+/// Mini real-time oscilloscope curve monitor for FX processors.
+fn draw_mini_fx_monitor(ui: &mut Ui, mode: u8, color: Color32, active: bool) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(48.0, 22.0), Sense::hover());
+    let painter = ui.painter();
+
+    // Dark recessed CRT monitor background
+    painter.rect_filled(rect, 2.0, Color32::from_rgb(7, 9, 14));
+    let border_col = if active {
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 130)
+    } else {
+        CyberTheme::BORDER_DARK
+    };
+    painter.rect_stroke(rect, 2.0, Stroke::new(1.0_f32, border_col), StrokeKind::Inside);
+
+    if !active {
+        // Flat inactive bypass line
+        let mid_y = rect.center().y;
+        painter.line_segment(
+            [pos2(rect.min.x + 3.0, mid_y), pos2(rect.max.x - 3.0, mid_y)],
+            Stroke::new(1.0_f32, Color32::from_rgb(35, 40, 56)),
+        );
+        return;
+    }
+
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f32())
+        .unwrap_or(0.0);
+
+    let num_pts = 16;
+    let mut pts = Vec::with_capacity(num_pts);
+
+    for i in 0..num_pts {
+        let frac = i as f32 / (num_pts - 1) as f32; // 0..1
+        let x = rect.min.x + 3.0 + frac * (rect.width() - 6.0);
+        let y_norm = match mode {
+            0 => {
+                // Distortion S-curve transfer function
+                let x_sym = (frac - 0.5) * 2.0;
+                let y_val = (x_sym * 2.4).tanh();
+                0.5 - y_val * 0.36
+            }
+            1 => {
+                // Chorus dual-phase sine modulation wave
+                let y_val = (frac * 3.0 * std::f32::consts::PI + t * 4.0).sin();
+                0.5 - y_val * 0.35
+            }
+            2 => {
+                // Delay stereo ping-pong bounce taps
+                let tap = ((frac * 5.0 + t * 2.0).fract() - 0.5).abs();
+                let decay = 1.0 - frac * 0.6;
+                0.5 - (tap * 2.0 - 0.5) * decay * 0.38
+            }
+            _ => {
+                // Reverb exponential diffusion decay envelope
+                let decay = (-frac * 3.2).exp();
+                let noise = ((frac * 24.0 + t * 3.0).sin() * 0.12) * decay;
+                0.78 - (decay * 0.60 + noise)
+            }
+        };
+        let y = rect.min.y + y_norm * rect.height();
+        pts.push(pos2(x, y));
+    }
+
+    for i in 0..pts.len().saturating_sub(1) {
+        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(1.3_f32, color));
+    }
 }
