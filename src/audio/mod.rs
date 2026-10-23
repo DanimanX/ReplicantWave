@@ -8,7 +8,7 @@ pub mod voice;
 pub mod wavetable;
 
 use fx::FxChain;
-use step_sequencer::{SeqMode, StepSequencer};
+use step_sequencer::{SeqMode, SeqStepEvent, StepSequencer};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use voice::Voice;
@@ -148,6 +148,22 @@ impl SynthEngine {
         }
     }
 
+    pub fn legato_glide(&mut self, note: u8, vel: f32) {
+        // Find active sounding voice and glide frequency smoothly without envelope retrigger
+        let mut glided = false;
+        for v in self.voices.iter_mut() {
+            if v.is_active() && !v.is_releasing {
+                v.glide_to(note, vel, 0.05); // 50ms smooth acid slide
+                self.last_note = note;
+                glided = true;
+                break;
+            }
+        }
+        if !glided {
+            self.note_on(note, vel);
+        }
+    }
+
     pub fn set_pitch_bend(&mut self, norm_bend: f32, max_semitones: f32) {
         self.pitch_bend_semitones = norm_bend * max_semitones;
     }
@@ -159,23 +175,43 @@ impl SynthEngine {
         out_left: &mut [f32],
         out_right: &mut [f32],
         host_bpm: f32,
+        host_playing: bool,
     ) {
         let num_samples = out_left.len().min(out_right.len());
         let mut active_count = 0;
 
         for i in 0..num_samples {
-            // Check Step Sequencer trigger
-            if let Some((seq_note, seq_vel, _seq_slide, _seq_accent)) = self.sequencer.process_sample(host_bpm) {
-                if self.sequencer.mode == SeqMode::InternalSynth {
-                    self.note_on(seq_note, seq_vel);
+            // Check Step Sequencer trigger with full host DAW & standalone bridging
+            match self.sequencer.process_sample(host_bpm, host_playing) {
+                SeqStepEvent::Trigger { note, velocity, slide, accent } => {
+                    if self.sequencer.mode == SeqMode::InternalSynth {
+                        let final_vel = if accent { (velocity * 1.3).min(1.0) } else { velocity };
+                        if slide {
+                            self.legato_glide(note, final_vel);
+                        } else {
+                            self.note_on(note, final_vel);
+                        }
+                    }
                 }
+                SeqStepEvent::Release { note } => {
+                    if self.sequencer.mode == SeqMode::InternalSynth {
+                        self.note_off(note);
+                    }
+                }
+                SeqStepEvent::None => {}
             }
 
-            let extra_cutoff = if self.sequencer.mode == SeqMode::ModCutoff {
-                self.sequencer.mod_output
-            } else {
-                0.0
+            let extra_cutoff = match self.sequencer.mode {
+                SeqMode::ModCutoff => (self.sequencer.mod_output - 0.5) * 5000.0,
+                _ => 0.0,
             };
+
+            if self.sequencer.mode == SeqMode::ModWTPos {
+                let pos = self.sequencer.mod_output;
+                for v in self.voices.iter_mut() {
+                    v.osc1.position = pos;
+                }
+            }
 
             let mut mix_l = 0.0;
             let mut mix_r = 0.0;

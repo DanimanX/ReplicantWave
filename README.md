@@ -75,25 +75,36 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer
   - Per-source routing matrix: route or bypass OSC 1, OSC 2, Sub, and Noise independently.
   - Key tracking and Velocity tracking.
 
+### 🎛️ Analog Rotary Hardware Controls
+- **Analog Rotary Potentiometers**: Hardware-style rotary knobs with illuminated neon angle arcs, metallic dial caps, fine-tune precision drag (`Shift` modifier), double-click reset, and contextual logarithmic/linear scaling.
+- Clean 2-row analog synth arrays for OSC 1, OSC 2, ZDF Filter, ADSR Envelopes, and FX modules.
+
+### 🔮 3D GPU Animated Wavetable Engine
+- **Live 3D Perspective Waterfall Mesh**: Dynamic 3D undulating terrain rendered directly via GPU with depth fog, dynamic perspective tilt, and wireframe ribbons.
+- **Neon Laser Scanline & Particle Orb**: Real-time laser sweep synchronized to the wavetable frame index and flying cyber energy particle nodes.
+
 ### ⚡ 64-Step Sliding Sequencer (Replicant303 Style)
 - **Collapsible Drawer Handle**:
   - Slides open and closed with a click (`[ ⚡ 64-STEP PATTERN SEQUENCER // EXPAND / COLLAPSE ⚡ ]`).
-- **Smooth Viewport Sliding Bar**:
+- **Smooth Viewport Sliding Bar & Auto-Follow**:
   - Continuously slide across all 64 steps smoothly, or jump via quick-page buttons: `[1-16]`, `[17-32]`, `[33-48]`, `[49-64]`.
-- **Per-Step Parameters**:
+  - **FOLLOW Mode**: Automatically tracks the active playhead across all 64 steps in real time.
+- **DAW & Standalone Seamless Bridging**:
+  - **SYNC: DAW**: Automatically locks and triggers with host DAW transport playback in VST3/CLAP/AU.
+  - **SYNC: FREE**: Internal standalone tempo clock with dedicated `BPM` analog rotary knob (40 to 240 BPM).
+- **Per-Step Hardware Controls**:
   - Gate (On/Off toggle) with live neon LED cursor.
-  - Note Pitch (-24 to +24 semitones with real-time note display: C2, D#2, etc.).
-  - Velocity slider (1 to 127).
-  - Slide flag (legato portamento transition).
-  - Accent flag (boosts velocity and filter resonance).
+  - Analog Pitch Knob (-24 to +24 semitones with real-time musical note display: C2, D#2, etc.).
+  - Analog Velocity Knob (1 to 127).
+  - Slide flag (`SLD`): True TB-303 style acid legato glide without retriggering envelopes.
+  - Accent flag (`ACC`): Velocity boost with dynamic filter resonance expansion.
 - **Sequencer Modes**:
-  - *Internal Synth*: Triggers internal synth voices directly.
+  - *Internal Synth*: Triggers internal synth voices directly with full polyphony management and automatic note-offs.
   - *Cutoff Mod*: Modulates filter cutoff rhythmically.
   - *WT Pos Mod*: Modulates wavetable position rhythmically.
 - **Clock & Groove**:
-  - Host BPM tempo sync or free internal clock.
   - Rates: 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/16D, 1/32.
-  - Groove Swing (0% to 75%).
+  - Groove Swing (0% to 75% analog rotary knob).
   - 🎲 Randomize (musical pentatonic/minor cyberpunk intervals) and ✖ Clear utilities.
 
 ### 🧪 Cyberpunk Multi-FX Engine
@@ -105,13 +116,13 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer
   - *Fire Amp* (asymmetric warm saturation).
   - *Grind Amp* (wavefolding fuzz).
 - **Ping-Pong Delay**: Tempo-synced (or ms) stereo cross-feedback delay with damping filter.
-- **Diffusion Reverb**: Algorithmic stereo plate/hall reverb with tuned comb filters and allpass diffusers.
+- **Diffusion Reverb**: Algorithmic stereo plate/hall reverb with tuned comb filters, cached coefficients, and allpass diffusers.
 
-### 🔋 CPU-Friendly DSP Architecture
+### 🔋 CPU-Friendly Ultra-Optimized DSP Architecture
+- **Eliminated CPU Spikes**: Bitmasked power-of-two table lookups, fast polynomial SVF filter coefficient calculations, and hardware-accelerated `exp2()` note-to-frequency conversions.
 - **Zero Audio-Thread Allocations**: Everything is pre-allocated at initialization.
 - **Voice Inactivity Sleeping**: Inactive voices immediately exit the processing loop once their envelopes finish.
 - **Voice Stealing Algorithm**: Smart allocation reuses the oldest or lowest-volume releasing voice without audio clicks.
-- **Efficient SIMD Math**: Optimized lookup tables and fast polynomial saturation approximations.
 
 ---
 

@@ -141,12 +141,13 @@ impl Plugin for ReplicantWave {
     ) -> ProcessStatus {
         let mut engine = self.engine.lock();
 
-        // Sync host BPM
+        // Sync host transport & BPM
+        let host_playing = context.transport().playing;
         let host_bpm = context
             .transport()
             .tempo
             .map(|t| t as f32)
-            .unwrap_or(125.0);
+            .unwrap_or(0.0);
 
         // Process incoming MIDI events
         while let Some(event) = context.next_event() {
@@ -179,7 +180,7 @@ impl Plugin for ReplicantWave {
         let left_slice = &mut left_channel[0][..num_samples];
         let right_slice = &mut right_channel[0][..num_samples];
 
-        engine.process_block(left_slice, right_slice, host_bpm);
+        engine.process_block(left_slice, right_slice, host_bpm, host_playing);
 
         ProcessStatus::Normal
     }

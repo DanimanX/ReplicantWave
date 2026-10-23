@@ -65,81 +65,92 @@ impl WavetableOscillator {
         }
 
         let unison = self.unison.clamp(1, MAX_UNISON);
-        let semitones = self.tune_semitones + (self.fine_cents / 100.0);
-        let center_freq = base_freq * 2.0f32.powf(semitones / 12.0);
+        let semitones = self.tune_semitones + (self.fine_cents * 0.01);
+        let center_freq = base_freq * (semitones * (1.0 / 12.0)).exp2();
+
+        let has_bend = self.bend.abs() > 0.001;
+        let has_formant = self.formant.abs() > 0.001;
+        let formant_factor = if has_formant {
+            (self.formant * 1.5).exp2()
+        } else {
+            1.0
+        };
+
+        // Ultra-fast path for 1-voice unison (avoids loop, trig & alloc overhead)
+        if unison == 1 {
+            let phase_inc = (center_freq / sample_rate).min(0.499);
+            let current_phase = self.phases[0];
+            let mut p = current_phase;
+
+            if has_bend {
+                let b = self.bend;
+                p = if b > 0.0 {
+                    p * (1.0 - b * (1.0 - p))
+                } else {
+                    p * (1.0 + (-b) * (1.0 - p))
+                };
+            }
+
+            if has_formant {
+                p = (p * formant_factor).fract();
+            }
+
+            let s = wt.sample(self.position, p);
+            let next_phase = current_phase + phase_inc;
+            self.phases[0] = next_phase - next_phase.floor();
+
+            let pan_rad = (self.pan.clamp(-1.0, 1.0) + 1.0) * (PI * 0.25);
+            let gl = pan_rad.cos() * self.level_gain;
+            let gr = pan_rad.sin() * self.level_gain;
+
+            return (s * gl, s * gr);
+        }
+
+        // Optimized multi-voice unison with precomputed gains and phase increments
+        let gain_norm = 1.0 / (unison as f32).sqrt();
+        let inv_unison_m1 = 1.0 / (unison - 1) as f32;
+        let detune_scaled = self.detune * (1.5 / 12.0);
 
         let mut out_l = 0.0;
         let mut out_r = 0.0;
 
-        let gain_norm = 1.0 / (unison as f32).sqrt();
-
         for i in 0..unison {
-            // Unison detune factor (-0.5 to +0.5 spread across voices)
-            let detune_ratio = if unison > 1 {
-                let frac = (i as f32 / (unison - 1) as f32) - 0.5;
-                2.0f32.powf((frac * self.detune * 1.5) / 12.0)
-            } else {
-                1.0
-            };
-
+            let frac = (i as f32 * inv_unison_m1) - 0.5;
+            let detune_ratio = (frac * detune_scaled).exp2();
             let voice_freq = center_freq * detune_ratio;
             let phase_inc = (voice_freq / sample_rate).min(0.499);
 
-            // Phase with Bend & Formant
             let current_phase = self.phases[i];
-            let modified_phase = apply_phase_modifiers(current_phase, self.formant, self.bend);
+            let mut p = current_phase;
 
-            let s = wt.sample(self.position, modified_phase);
+            if has_bend {
+                let b = self.bend;
+                p = if b > 0.0 {
+                    p * (1.0 - b * (1.0 - p))
+                } else {
+                    p * (1.0 + (-b) * (1.0 - p))
+                };
+            }
 
-            // Advance phase
-            self.phases[i] = (current_phase + phase_inc) - (current_phase + phase_inc).floor();
+            if has_formant {
+                p = (p * formant_factor).fract();
+            }
 
-            // Stereo pan per unison voice
-            let pan_voice = if unison > 1 {
-                let frac = (i as f32 / (unison - 1) as f32) * 2.0 - 1.0;
-                (self.pan + frac * self.spread).clamp(-1.0, 1.0)
-            } else {
-                self.pan.clamp(-1.0, 1.0)
-            };
+            let s = wt.sample(self.position, p);
+            let next_phase = current_phase + phase_inc;
+            self.phases[i] = next_phase - next_phase.floor();
 
-            // Equal power panning
-            let pan_rad = (pan_voice + 1.0) * (PI / 4.0);
-            let gl = pan_rad.cos();
-            let gr = pan_rad.sin();
+            let pan_voice = (self.pan + (frac * 2.0) * self.spread).clamp(-1.0, 1.0);
+            let pan_rad = (pan_voice + 1.0) * (PI * 0.25);
+            let gl = pan_rad.cos() * gain_norm;
+            let gr = pan_rad.sin() * gain_norm;
 
-            out_l += s * gl * gain_norm;
-            out_r += s * gr * gain_norm;
+            out_l += s * gl;
+            out_r += s * gr;
         }
 
         (out_l * self.level_gain, out_r * self.level_gain)
     }
-}
-
-/// Apply Formant (stretch/compress) and Bend (phase warp)
-#[inline(always)]
-fn apply_phase_modifiers(phase: f32, formant: f32, bend: f32) -> f32 {
-    let mut p = phase;
-
-    // Bend warp: bends phase curve nonlinearly
-    if bend.abs() > 0.001 {
-        if bend > 0.0 {
-            // Squeeze towards start
-            let k = 1.0 + bend * 3.0;
-            p = p.powf(k);
-        } else {
-            // Squeeze towards end
-            let k = 1.0 + (-bend) * 3.0;
-            p = 1.0 - (1.0 - p).powf(k);
-        }
-    }
-
-    // Formant warp: scales phase frequency window
-    if formant.abs() > 0.001 {
-        let factor = 2.0f32.powf(formant * 1.5);
-        p = (p * factor).fract();
-    }
-
-    p
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

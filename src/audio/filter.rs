@@ -97,27 +97,36 @@ impl StereoFilter {
         // Clamp cutoff to safe audible range below Nyquist
         let target_cutoff = mod_cutoff_hz.clamp(20.0, sample_rate * 0.48);
 
-        // Prewarp frequency for bilinear transform
-        let wd = 2.0 * PI * target_cutoff;
-        let t = 1.0 / sample_rate;
-        let wa = (2.0 / t) * (wd * t / 2.0).tan();
-        let g = wa * t / 2.0;
+        // Prewarp frequency for bilinear transform: g = tan(pi * fc / fs)
+        let w = PI * target_cutoff / sample_rate;
+        // Fast tangent for audio filter range
+        let g = if w < 0.6 {
+            w * (1.0 + w * w * 0.33333333)
+        } else {
+            w.tan()
+        };
 
         // Q from resonance (0.0 to 1.0 -> 0.707 to 20.0)
         let q = 0.707 + self.resonance.clamp(0.0, 1.0) * 19.3;
         let k = 1.0 / q;
 
+        // Precompute stage coefficients once per sample pair
+        let a1 = 1.0 / (1.0 + g * (g + k));
+        let a2 = g * a1;
+        let a3 = g * a2;
+
         // Drive saturation factor
         let drive = self.drive.clamp(1.0, 5.0);
+        let inv_drive = 1.0 / drive.sqrt();
 
-        let out_l = self.process_channel(in_l * drive, g, k, 0) / drive.sqrt();
-        let out_r = self.process_channel(in_r * drive, g, k, 1) / drive.sqrt();
+        let out_l = self.process_channel(in_l * drive, a1, a2, a3, k, 0) * inv_drive;
+        let out_r = self.process_channel(in_r * drive, a1, a2, a3, k, 1) * inv_drive;
 
         (out_l, out_r)
     }
 
     #[inline(always)]
-    fn process_channel(&mut self, input: f32, g: f32, k: f32, ch: usize) -> f32 {
+    fn process_channel(&mut self, input: f32, a1: f32, a2: f32, a3: f32, k: f32, ch: usize) -> f32 {
         let (s1, s2) = if ch == 0 {
             (&mut self.s1_l, &mut self.s2_l)
         } else {
@@ -125,7 +134,7 @@ impl StereoFilter {
         };
 
         // First SVF stage
-        let out1 = svf_stage(input, g, k, &mut s1[0], &mut s2[0], self.filter_type, false);
+        let out1 = svf_stage(input, a1, a2, a3, k, &mut s1[0], &mut s2[0], self.filter_type, false);
 
         match self.filter_type {
             FilterType::LowPass12 | FilterType::HighPass12 | FilterType::BandPass12 | FilterType::Notch => {
@@ -133,7 +142,7 @@ impl StereoFilter {
             }
             FilterType::LowPass24 | FilterType::HighPass24 | FilterType::BandPass24 => {
                 // Second stage cascaded for 24 dB/oct slope
-                svf_stage(out1, g, k, &mut s1[1], &mut s2[1], self.filter_type, true)
+                svf_stage(out1, a1, a2, a3, k, &mut s1[1], &mut s2[1], self.filter_type, true)
             }
         }
     }
@@ -142,17 +151,15 @@ impl StereoFilter {
 #[inline(always)]
 fn svf_stage(
     input: f32,
-    g: f32,
+    a1: f32,
+    a2: f32,
+    a3: f32,
     k: f32,
     s1: &mut f32,
     s2: &mut f32,
     filter_type: FilterType,
     is_second_stage: bool,
 ) -> f32 {
-    let a1 = 1.0 / (1.0 + g * (g + k));
-    let a2 = g * a1;
-    let a3 = g * a2;
-
     let v0 = input;
     let v1 = a1 * *s1 + a2 * (v0 - *s2);
     let v2 = *s2 + a3 * (v0 - *s2) + a2 * *s1;

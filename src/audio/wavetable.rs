@@ -51,18 +51,22 @@ impl Wavetable {
         s0 + frac * (s1 - s0)
     }
 
-    /// Read sample from a single frame with linear interpolation.
+    /// Read sample from a single frame with fast bitmask linear interpolation.
     #[inline(always)]
     pub fn sample_frame(&self, frame_idx: usize, phase: f32) -> f32 {
         let frame = &self.frames[frame_idx];
         let n = self.table_size;
-        let wrapped_phase = phase - phase.floor();
+        let mask = n - 1;
+        let wrapped_phase = phase.fract();
+        let wrapped_phase = if wrapped_phase < 0.0 { wrapped_phase + 1.0 } else { wrapped_phase };
         let index_f = wrapped_phase * n as f32;
-        let idx0 = index_f as usize % n;
-        let idx1 = (idx0 + 1) % n;
+        let idx0 = (index_f as usize) & mask;
+        let idx1 = (idx0 + 1) & mask;
         let frac = index_f - idx0 as f32;
 
-        frame[idx0] + frac * (frame[idx1] - idx0_lookup(frame, idx0, idx1))
+        let s0 = frame[idx0];
+        let s1 = frame[idx1];
+        s0 + frac * (s1 - s0)
     }
 
     /// Load wavetable from a WAV file (supports 256, 512, 1024, 2048 sample sizes).
@@ -122,10 +126,7 @@ impl Wavetable {
     }
 }
 
-#[inline(always)]
-fn idx0_lookup(frame: &[f32], idx0: usize, idx1: usize) -> f32 {
-    frame[idx0] - frame[idx1]
-}
+
 
 /// Collection of factory cyberpunk wavetables.
 pub struct WavetableBank {

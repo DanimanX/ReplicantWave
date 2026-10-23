@@ -111,6 +111,15 @@ impl Voice {
         self.lfo2.reset_phase();
     }
 
+    pub fn glide_to(&mut self, note: u8, vel: f32, glide_time_s: f32) {
+        self.active_midi_note = note;
+        self.target_note = note as f32;
+        self.velocity = vel.clamp(0.01, 1.0);
+        let glide_samples = (glide_time_s * self.sample_rate).max(1.0);
+        self.glide_coeff = (-1.0 / glide_samples).exp();
+        self.is_releasing = false;
+    }
+
     pub fn note_off(&mut self) {
         self.is_releasing = true;
         self.amp_env.release();
@@ -146,8 +155,8 @@ impl Voice {
         }
 
         let effective_note = self.current_note + pitch_bend_semitones;
-        // MIDI note to Hz formula
-        let base_freq = 440.0 * 2.0f32.powf((effective_note - 69.0) / 12.0);
+        // MIDI note to Hz formula using fast exp2
+        let base_freq = 440.0 * ((effective_note - 69.0) * (1.0 / 12.0)).exp2();
 
         // Process envelopes & LFOs
         let amp_level = self.amp_env.process_sample();

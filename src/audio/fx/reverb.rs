@@ -99,6 +99,8 @@ pub struct StereoReverb {
     pub width: f32,     // 0.0 to 1.0
     pub mix: f32,       // 0.0 to 1.0
 
+    last_room_size: f32,
+    last_damping: f32,
     combs_l: Vec<CombFilter>,
     combs_r: Vec<CombFilter>,
     allpasses_l: Vec<AllpassFilter>,
@@ -114,6 +116,8 @@ impl Default for StereoReverb {
             damping: 0.3,
             width: 1.0,
             mix: 0.3,
+            last_room_size: -1.0,
+            last_damping: -1.0,
             combs_l: COMB_TUNING_L.iter().map(|&sz| CombFilter::new(sz)).collect(),
             combs_r: COMB_TUNING_R.iter().map(|&sz| CombFilter::new(sz)).collect(),
             allpasses_l: ALLPASS_TUNING_L.iter().map(|&sz| AllpassFilter::new(sz)).collect(),
@@ -157,7 +161,11 @@ impl StereoReverb {
             return (in_l, in_r);
         }
 
-        self.update_params();
+        if (self.room_size - self.last_room_size).abs() > 0.001 || (self.damping - self.last_damping).abs() > 0.001 {
+            self.last_room_size = self.room_size;
+            self.last_damping = self.damping;
+            self.update_params();
+        }
 
         let input = (in_l + in_r) * 0.015;
 

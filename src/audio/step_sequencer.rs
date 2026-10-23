@@ -95,6 +95,20 @@ impl SeqMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SeqStepEvent {
+    None,
+    Trigger {
+        note: u8,
+        velocity: f32,
+        slide: bool,
+        accent: bool,
+    },
+    Release {
+        note: u8,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct StepSequencer {
     pub steps: [Step; MAX_STEPS],
@@ -102,14 +116,19 @@ pub struct StepSequencer {
     pub rate: SeqRate,
     pub swing: f32,          // 0.0 to 0.75
     pub running: bool,
+    pub host_sync: bool,     // Auto-trigger when host DAW transport is playing
     pub mode: SeqMode,
     pub octave: i8,          // -2 to +2
     pub root_note: u8,       // Base MIDI note (e.g. 36 = C2)
+    pub internal_bpm: f32,   // Standalone / free tempo
 
     pub current_step: usize,
     sample_counter: f32,
     pub step_just_triggered: bool,
     pub mod_output: f32,     // Current smoothed modulation output (0.0 to 1.0)
+    current_sounding_note: Option<u8>,
+    gate_released: bool,
+    first_step_pending: bool,
     sample_rate: f32,
 }
 
@@ -140,13 +159,18 @@ impl Default for StepSequencer {
             rate: SeqRate::Rate1_16,
             swing: 0.0,
             running: false,
+            host_sync: true,
             mode: SeqMode::InternalSynth,
             octave: 0,
             root_note: 36, // C2
+            internal_bpm: 125.0,
             current_step: 0,
             sample_counter: 0.0,
             step_just_triggered: false,
             mod_output: 0.0,
+            current_sounding_note: None,
+            gate_released: false,
+            first_step_pending: true,
             sample_rate: 44100.0,
         }
     }
@@ -160,20 +184,27 @@ impl StepSequencer {
     pub fn reset(&mut self) {
         self.current_step = 0;
         self.sample_counter = 0.0;
+        self.first_step_pending = true;
         self.step_just_triggered = false;
         self.mod_output = 0.0;
+        self.current_sounding_note = None;
+        self.gate_released = false;
     }
 
-    /// Advance one sample. If a step fires, returns `Some((midi_note, velocity, slide, accent))`
+    /// Advance one sample. Returns event: `Trigger`, `Release`, or `None`.
     #[inline(always)]
-    pub fn process_sample(&mut self, bpm: f32) -> Option<(u8, f32, bool, bool)> {
-        if !self.running || self.mode == SeqMode::Off {
+    pub fn process_sample(&mut self, host_bpm: f32, host_playing: bool) -> SeqStepEvent {
+        let is_running = self.running || (self.host_sync && host_playing);
+        if !is_running || self.mode == SeqMode::Off {
             self.step_just_triggered = false;
-            return None;
+            if let Some(note) = self.current_sounding_note.take() {
+                return SeqStepEvent::Release { note };
+            }
+            return SeqStepEvent::None;
         }
 
-        let effective_bpm = bpm.max(30.0);
-        let beats_per_sec = effective_bpm / 60.0;
+        let effective_bpm = if self.host_sync && host_bpm > 30.0 { host_bpm } else { self.internal_bpm }.max(30.0);
+        let beats_per_sec = effective_bpm * (1.0 / 60.0);
         let base_step_time = self.rate.to_beat_fraction() / beats_per_sec;
         let base_step_samples = base_step_time * self.sample_rate;
 
@@ -184,30 +215,75 @@ impl StepSequencer {
             1.0 - self.swing.clamp(0.0, 0.75) * 0.5
         };
 
-        let step_samples = base_step_samples * swing_factor;
+        let step_samples = (base_step_samples * swing_factor).max(64.0);
+        let gate_samples = step_samples * 0.65; // 65% gate ratio for crisp articulation
 
+        // Immediate first step trigger upon playback start
+        if self.first_step_pending {
+            self.first_step_pending = false;
+            self.sample_counter = 0.0;
+            self.current_step = 0;
+            self.gate_released = false;
+            self.step_just_triggered = true;
+
+            let step = &self.steps[0];
+            self.mod_output = (step.note_offset as f32 + 24.0) * (1.0 / 48.0);
+            if step.gate {
+                let note_val = (self.root_note as i32 + (self.octave as i32 * 12) + step.note_offset as i32)
+                    .clamp(0, 127) as u8;
+                let vel = (step.velocity as f32 * (1.0 / 127.0)).clamp(0.05, 1.0);
+                self.current_sounding_note = Some(note_val);
+                return SeqStepEvent::Trigger {
+                    note: note_val,
+                    velocity: vel,
+                    slide: step.slide,
+                    accent: step.accent,
+                };
+            }
+        }
+
+        // 1. Check if gate duration expired within current step
+        if self.sample_counter >= gate_samples && !self.gate_released {
+            self.gate_released = true;
+            let current_step_obj = &self.steps[self.current_step];
+            // If not slide, release the sounding note now
+            if !current_step_obj.slide {
+                if let Some(note) = self.current_sounding_note.take() {
+                    return SeqStepEvent::Release { note };
+                }
+            }
+        }
+
+        // 2. Advance step when sample_counter reaches step_samples
         self.sample_counter += 1.0;
         if self.sample_counter >= step_samples {
             self.sample_counter = 0.0;
             self.current_step = (self.current_step + 1) % self.length.max(1).min(MAX_STEPS);
             self.step_just_triggered = true;
+            self.gate_released = false;
 
             let step = &self.steps[self.current_step];
+            // Update CV modulation output
+            self.mod_output = (step.note_offset as f32 + 24.0) * (1.0 / 48.0);
+
             if step.gate {
                 let note_val = (self.root_note as i32 + (self.octave as i32 * 12) + step.note_offset as i32)
                     .clamp(0, 127) as u8;
-                let vel = (step.velocity as f32 / 127.0).clamp(0.05, 1.0);
+                let vel = (step.velocity as f32 * (1.0 / 127.0)).clamp(0.05, 1.0);
 
-                // Update mod output
-                self.mod_output = (step.note_offset as f32 + 24.0) / 48.0;
-
-                return Some((note_val, vel, step.slide, step.accent));
+                self.current_sounding_note = Some(note_val);
+                return SeqStepEvent::Trigger {
+                    note: note_val,
+                    velocity: vel,
+                    slide: step.slide,
+                    accent: step.accent,
+                };
             }
         } else {
             self.step_just_triggered = false;
         }
 
-        None
+        SeqStepEvent::None
     }
 
     /// Clear all steps.

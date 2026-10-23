@@ -1,7 +1,7 @@
-//! 3D GPU-Accelerated Futuristic Cyberpunk Wavetable Visualizer.
+//! 3D GPU-Accelerated Animated Futuristic Cyberpunk Wavetable Visualizer.
 //!
-//! Renders a true 3D perspective waterfall mesh with volumetric GPU polygon fills,
-//! depth fog, longitudinal wireframe ribbons, and real-time morph slice tracking.
+//! Renders a live 3D perspective waterfall mesh with dynamic volumetric GPU polygon fills,
+//! real-time undulating wave motion, depth fog, sweeping laser scanners, and cyber particle nodes.
 
 use super::theme::CyberTheme;
 use crate::audio::wavetable::Wavetable;
@@ -17,11 +17,15 @@ pub fn draw_wavetable_preview(
     width: f32,
     height: f32,
 ) -> Response {
+    // Request continuous GPU repaint for smooth 60 FPS futuristic animation
+    ui.ctx().request_repaint();
+    let t = ui.input(|i| i.time) as f32;
+
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let painter = ui.painter();
 
     // 1. Futuristic Recessed Viewport with Chamfered Frame
-    painter.rect_filled(rect, 4.0, Color32::from_rgb(8, 10, 16));
+    painter.rect_filled(rect, 4.0, Color32::from_rgb(7, 9, 15));
     painter.rect_stroke(
         rect,
         4.0,
@@ -35,21 +39,21 @@ pub fn draw_wavetable_preview(
     while scan_y < rect.max.y {
         painter.line_segment(
             [pos2(rect.min.x + 2.0, scan_y), pos2(rect.max.x - 2.0, scan_y)],
-            Stroke::new(0.5_f32, Color32::from_rgba_unmultiplied(15, 20, 32, 40)),
+            Stroke::new(0.5_f32, Color32::from_rgba_unmultiplied(14, 18, 30, 40)),
         );
         scan_y += scanline_step;
     }
 
-    // 2. 3D Perspective Projection Setup
+    // 2. 3D Perspective Projection Setup with Subtle Breathing Angle
     // Z goes from 0.0 (deep in the background, top-right) to 1.0 (foreground, bottom-left)
     let margin_x = 10.0;
-    let base_y_front = rect.max.y - 10.0;
+    let breath_tilt = (t * 0.7).sin() * 2.0;
+    let base_y_front = rect.max.y - 10.0 + breath_tilt * 0.5;
     let base_y_back = rect.min.y + 16.0;
-    let depth_offset_x = 22.0;
+    let depth_offset_x = 22.0 + (t * 0.5).cos() * 3.0;
 
     // Helper: calculate 3D projected screen coordinates for a point (phase [0..1], amp [-1..1], z [0..1])
     let project_3d = |phase: f32, amp: f32, z: f32| -> Pos2 {
-        // Perspective narrowing at distance
         let perspective_scale = 0.82 + 0.18 * z;
         let baseline_y = base_y_front - (1.0 - z) * (base_y_front - base_y_back);
         let start_x = rect.min.x + margin_x + (1.0 - z) * depth_offset_x;
@@ -73,37 +77,47 @@ pub fn draw_wavetable_preview(
         );
     }
 
-    // 4. Background 3D Wireframe Waterfall Slices
+    // 4. Background 3D Wireframe Waterfall Slices with Live Waveform Undulation
     let num_slices = 8;
     let num_points = 48;
     let total_frames = wt.num_frames().max(1);
 
-    // Collect 3D points for all slices to allow drawing longitudinal cross-ribbons
+    // Laser scanner position moving back and forth across 3D depth
+    let scan_z = (t * 0.75).sin().abs();
+
     let mut slice_points: Vec<Vec<Pos2>> = Vec::with_capacity(num_slices);
 
     for s in 0..num_slices {
         let z = s as f32 / (num_slices - 1) as f32;
         let frame_idx = ((1.0 - z) * (total_frames - 1) as f32).round() as usize;
 
-        // Depth fog color: distant slices fade into dark cyber neon
-        let alpha = (25.0 + z * 55.0) as u8;
+        // Is this slice currently illuminated by the sweeping 3D laser?
+        let dist_to_scan = (z - scan_z).abs();
+        let is_scanned = dist_to_scan < 0.14;
+        let scan_boost = if is_scanned { (1.0 - dist_to_scan / 0.14) * 80.0 } else { 0.0 };
+
+        // Depth fog color with dynamic wave pulse
+        let base_alpha = 25.0 + z * 50.0 + scan_boost;
         let depth_tint = 0.45 + z * 0.55;
         let slice_col = Color32::from_rgba_unmultiplied(
-            (color.r() as f32 * depth_tint) as u8,
-            (color.g() as f32 * depth_tint) as u8,
-            (color.b() as f32 * depth_tint) as u8,
-            alpha,
+            ((color.r() as f32 * depth_tint) + scan_boost).min(255.0) as u8,
+            ((color.g() as f32 * depth_tint) + scan_boost).min(255.0) as u8,
+            ((color.b() as f32 * depth_tint) + scan_boost).min(255.0) as u8,
+            base_alpha.min(240.0) as u8,
         );
 
         let pts: Vec<Pos2> = (0..num_points).map(|i| {
             let phase = i as f32 / (num_points - 1) as f32;
-            let amp = wt.sample_frame(frame_idx, phase);
+            // Subtle living 3D ripple along the waveform terrain
+            let ripple = 1.0 + 0.06 * (phase * 12.0 - t * 3.0 + z * 6.0).sin();
+            let amp = wt.sample_frame(frame_idx, phase) * ripple;
             project_3d(phase, amp, z)
         }).collect();
 
-        // Draw wireframe slice line
+        // Draw wireframe slice line (thicker if laser is scanning over it)
+        let stroke_w = if is_scanned { 1.5_f32 } else { 1.0_f32 };
         for i in 0..pts.len().saturating_sub(1) {
-            painter.line_segment([pts[i], pts[i + 1]], Stroke::new(1.0_f32, slice_col));
+            painter.line_segment([pts[i], pts[i + 1]], Stroke::new(stroke_w, slice_col));
         }
 
         slice_points.push(pts);
@@ -137,10 +151,10 @@ pub fn draw_wavetable_preview(
         project_3d(phase, 0.0, z_active)
     }).collect();
 
-    // GPU-Accelerated Volumetric Hologram Mesh
-    // Generates hardware-interpolated gradient triangles from crest down to 3D baseline
+    // GPU-Accelerated Volumetric Hologram Mesh with Breathing Energy
     let mut mesh = Mesh::default();
-    let mesh_top_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 125);
+    let energy_pulse = 120.0 + (t * 4.0).sin() * 25.0;
+    let mesh_top_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), energy_pulse as u8);
     let mesh_base_color = Color32::from_rgba_unmultiplied(color.r() / 4, color.g() / 4, color.b() / 4, 10);
 
     for i in 0..num_points.saturating_sub(1) {
@@ -167,7 +181,7 @@ pub fn draw_wavetable_preview(
     for i in 0..active_points.len().saturating_sub(1) {
         painter.line_segment(
             [active_points[i], active_points[i + 1]],
-            Stroke::new(4.5_f32, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 70)),
+            Stroke::new(4.5_f32, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 75)),
         );
     }
     // Pass B: Intense core laser
@@ -178,7 +192,7 @@ pub fn draw_wavetable_preview(
         );
     }
 
-    // 7. Max Crest Cyber Marker (Find highest peak and draw diamond target)
+    // 7. Max Crest Cyber Marker & Traveling Cyber Energy Orb
     let mut max_y = f32::INFINITY;
     let mut peak_pos = active_points[0];
     for &p in &active_points {
@@ -193,6 +207,15 @@ pub fn draw_wavetable_preview(
     painter.line_segment([pos2(peak_pos.x + d_size, peak_pos.y), pos2(peak_pos.x, peak_pos.y + d_size)], Stroke::new(1.5_f32, Color32::WHITE));
     painter.line_segment([pos2(peak_pos.x, peak_pos.y + d_size), pos2(peak_pos.x - d_size, peak_pos.y)], Stroke::new(1.5_f32, Color32::WHITE));
     painter.line_segment([pos2(peak_pos.x - d_size, peak_pos.y), pos2(peak_pos.x, peak_pos.y - d_size)], Stroke::new(1.5_f32, Color32::WHITE));
+
+    // Animated cyber particle travelling along the active wave
+    let orb_phase = (t * 0.4).fract();
+    let orb_idx = (orb_phase * (active_points.len() - 1) as f32).floor() as usize;
+    if orb_idx < active_points.len() {
+        let orb_pos = active_points[orb_idx];
+        painter.circle_filled(orb_pos, 2.5, Color32::WHITE);
+        painter.circle_stroke(orb_pos, 4.5, Stroke::new(1.0_f32, color));
+    }
 
     // 8. Right-Side 3D Depth Rail Indicator
     let rail_x = rect.max.x - 7.0;
@@ -217,7 +240,7 @@ pub fn draw_wavetable_preview(
         nih_plug_egui::egui::Align2::LEFT_TOP,
         hud_text,
         nih_plug_egui::egui::FontId::monospace(8.5),
-        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 180),
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 190),
     );
 
     // Corner HUD Brackets

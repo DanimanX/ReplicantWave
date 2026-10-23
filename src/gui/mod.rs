@@ -1,3 +1,4 @@
+pub mod knob;
 pub mod oscilloscope;
 pub mod sequencer_view;
 pub mod theme;
@@ -8,13 +9,14 @@ use crate::audio::fx::distortion::DistortionMode;
 use crate::audio::SynthEngine;
 use crate::presets::factory::get_factory_presets;
 use crate::presets::SynthPreset;
+use knob::{draw_rotary_knob, draw_rotary_knob_log, draw_rotary_knob_usize};
 use oscilloscope::draw_oscilloscope;
 use sequencer_view::{draw_sequencer_drawer, SequencerUiState};
 use theme::CyberTheme;
 use wavetable_view::draw_wavetable_preview;
 
 use nih_plug_egui::egui::{
-    Button, Color32, ComboBox, RichText, Slider, Stroke, Ui,
+    Button, Color32, ComboBox, RichText, Stroke, Ui,
 };
 use parking_lot::Mutex;
 use std::sync::atomic::Ordering;
@@ -108,16 +110,12 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                     .size(11.0),
             );
 
-            ui.add_space(16.0);
+            ui.add_space(8.0);
 
-            // Master Volume Slider
-            ui.label(RichText::new("MASTER:").color(CyberTheme::TEXT_MUTED).size(11.0));
-            ui.add_sized(
-                [90.0, 18.0],
-                Slider::new(&mut engine.master_gain, 0.0..=1.5).show_value(false),
-            );
+            // Master Volume Analog Rotary Knob
+            draw_rotary_knob(ui, &mut engine.master_gain, 0.0..=1.5, "MASTER", CyberTheme::NEON_AMBER);
 
-            ui.add_space(20.0);
+            ui.add_space(12.0);
 
             // =====================================================================
             // DONATION BUTTON (Required by user!)
@@ -178,58 +176,41 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                     let cur_pos1 = engine.voices[0].osc1.position;
                     draw_wavetable_preview(ui, cur_wt1, cur_pos1, CyberTheme::NEON_CYAN, 296.0, 68.0);
 
-                    // Osc 1 Sliders
+                    // Osc 1 Rotary Knobs (Row 1: POS, TUNE, UNISON, DETUNE)
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("POS:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc1.position, 0.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.position, 0.0..=1.0, "POS", CyberTheme::NEON_CYAN).changed() {
                             let val = engine.voices[0].osc1.position;
                             for v in engine.voices.iter_mut() { v.osc1.position = val; }
                         }
-
-                        ui.label(RichText::new("TUNE:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc1.tune_semitones, -36.0..=36.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.tune_semitones, -36.0..=36.0, "TUNE", CyberTheme::NEON_CYAN).changed() {
                             let val = engine.voices[0].osc1.tune_semitones;
                             for v in engine.voices.iter_mut() { v.osc1.tune_semitones = val; }
                         }
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("UNISON:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc1.unison, 1..=8).show_value(false)).changed() {
+                        if draw_rotary_knob_usize(ui, &mut engine.voices[0].osc1.unison, 1..=8, "UNISON", CyberTheme::NEON_CYAN).changed() {
                             let val = engine.voices[0].osc1.unison;
                             for v in engine.voices.iter_mut() { v.osc1.unison = val; }
                         }
-
-                        ui.label(RichText::new("DETUNE:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc1.detune, 0.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.detune, 0.0..=1.0, "DETUNE", CyberTheme::NEON_CYAN).changed() {
                             let val = engine.voices[0].osc1.detune;
                             for v in engine.voices.iter_mut() { v.osc1.detune = val; }
                         }
                     });
 
+                    // Osc 1 Rotary Knobs (Row 2: LEVEL, SPREAD, FORMANT, BEND)
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("LEVEL:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc1.level_gain, 0.0..=1.5).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.level_gain, 0.0..=1.5, "LEVEL", CyberTheme::NEON_CYAN).changed() {
                             let val = engine.voices[0].osc1.level_gain;
                             for v in engine.voices.iter_mut() { v.osc1.level_gain = val; }
                         }
-
-                        ui.label(RichText::new("SPREAD:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc1.spread, 0.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.spread, 0.0..=1.0, "SPREAD", CyberTheme::NEON_CYAN).changed() {
                             let val = engine.voices[0].osc1.spread;
                             for v in engine.voices.iter_mut() { v.osc1.spread = val; }
                         }
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("FORMANT:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc1.formant, -1.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.formant, -1.0..=1.0, "FORMANT", CyberTheme::NEON_CYAN).changed() {
                             let val = engine.voices[0].osc1.formant;
                             for v in engine.voices.iter_mut() { v.osc1.formant = val; }
                         }
-
-                        ui.label(RichText::new("BEND:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc1.bend, -1.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc1.bend, -1.0..=1.0, "BEND", CyberTheme::NEON_CYAN).changed() {
                             let val = engine.voices[0].osc1.bend;
                             for v in engine.voices.iter_mut() { v.osc1.bend = val; }
                         }
@@ -263,45 +244,43 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                     let cur_pos2 = engine.voices[0].osc2.position;
                     draw_wavetable_preview(ui, cur_wt2, cur_pos2, CyberTheme::NEON_PINK, 296.0, 68.0);
 
+                    // Osc 2 Rotary Knobs (Row 1: POS, TUNE, UNISON, DETUNE)
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("POS:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc2.position, 0.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.position, 0.0..=1.0, "POS", CyberTheme::NEON_PINK).changed() {
                             let val = engine.voices[0].osc2.position;
                             for v in engine.voices.iter_mut() { v.osc2.position = val; }
                         }
-
-                        ui.label(RichText::new("TUNE:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc2.tune_semitones, -36.0..=36.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.tune_semitones, -36.0..=36.0, "TUNE", CyberTheme::NEON_PINK).changed() {
                             let val = engine.voices[0].osc2.tune_semitones;
                             for v in engine.voices.iter_mut() { v.osc2.tune_semitones = val; }
                         }
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("UNISON:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc2.unison, 1..=8).show_value(false)).changed() {
+                        if draw_rotary_knob_usize(ui, &mut engine.voices[0].osc2.unison, 1..=8, "UNISON", CyberTheme::NEON_PINK).changed() {
                             let val = engine.voices[0].osc2.unison;
                             for v in engine.voices.iter_mut() { v.osc2.unison = val; }
                         }
-
-                        ui.label(RichText::new("DETUNE:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc2.detune, 0.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.detune, 0.0..=1.0, "DETUNE", CyberTheme::NEON_PINK).changed() {
                             let val = engine.voices[0].osc2.detune;
                             for v in engine.voices.iter_mut() { v.osc2.detune = val; }
                         }
                     });
 
+                    // Osc 2 Rotary Knobs (Row 2: LEVEL, SPREAD, FORMANT, BEND)
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("LEVEL:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc2.level_gain, 0.0..=1.5).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.level_gain, 0.0..=1.5, "LEVEL", CyberTheme::NEON_PINK).changed() {
                             let val = engine.voices[0].osc2.level_gain;
                             for v in engine.voices.iter_mut() { v.osc2.level_gain = val; }
                         }
-
-                        ui.label(RichText::new("SPREAD:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].osc2.spread, 0.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.spread, 0.0..=1.0, "SPREAD", CyberTheme::NEON_PINK).changed() {
                             let val = engine.voices[0].osc2.spread;
                             for v in engine.voices.iter_mut() { v.osc2.spread = val; }
+                        }
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.formant, -1.0..=1.0, "FORMANT", CyberTheme::NEON_PINK).changed() {
+                            let val = engine.voices[0].osc2.formant;
+                            for v in engine.voices.iter_mut() { v.osc2.formant = val; }
+                        }
+                        if draw_rotary_knob(ui, &mut engine.voices[0].osc2.bend, -1.0..=1.0, "BEND", CyberTheme::NEON_PINK).changed() {
+                            let val = engine.voices[0].osc2.bend;
+                            for v in engine.voices.iter_mut() { v.osc2.bend = val; }
                         }
                     });
                 });
@@ -353,29 +332,21 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                             });
                     });
 
+                    // Filter Analog Rotary Knobs (Row 1: CUTOFF, RESO, DRIVE, ENV MOD)
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("CUTOFF:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].filter.cutoff_hz, 20.0..=18000.0).logarithmic(true).show_value(false)).changed() {
+                        if draw_rotary_knob_log(ui, &mut engine.voices[0].filter.cutoff_hz, 20.0..=18000.0, "CUTOFF", CyberTheme::NEON_AMBER).changed() {
                             let val = engine.voices[0].filter.cutoff_hz;
                             for v in engine.voices.iter_mut() { v.filter.cutoff_hz = val; }
                         }
-
-                        ui.label(RichText::new("RESO:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].filter.resonance, 0.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].filter.resonance, 0.0..=1.0, "RESO", CyberTheme::NEON_AMBER).changed() {
                             let val = engine.voices[0].filter.resonance;
                             for v in engine.voices.iter_mut() { v.filter.resonance = val; }
                         }
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("DRIVE:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].filter.drive, 1.0..=4.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].filter.drive, 1.0..=4.0, "DRIVE", CyberTheme::NEON_AMBER).changed() {
                             let val = engine.voices[0].filter.drive;
                             for v in engine.voices.iter_mut() { v.filter.drive = val; }
                         }
-
-                        ui.label(RichText::new("ENV MOD:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].filter.env_amount, -1.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].filter.env_amount, -1.0..=1.0, "ENV MOD", CyberTheme::NEON_AMBER).changed() {
                             let val = engine.voices[0].filter.env_amount;
                             for v in engine.voices.iter_mut() { v.filter.env_amount = val; }
                         }
@@ -405,19 +376,17 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 ui.group(|ui| {
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut engine.voices[0].sub.enabled, "");
-                        ui.label(RichText::new("SUB OSC:").color(CyberTheme::NEON_LIME).strong());
-                        ui.label(RichText::new("LVL:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].sub.level_gain, 0.0..=1.0).show_value(false)).changed() {
+                        ui.label(RichText::new("SUB OSC:").color(CyberTheme::NEON_LIME).strong().size(11.0));
+                        if draw_rotary_knob(ui, &mut engine.voices[0].sub.level_gain, 0.0..=1.0, "SUB LVL", CyberTheme::NEON_LIME).changed() {
                             let val = engine.voices[0].sub.level_gain;
                             for v in engine.voices.iter_mut() { v.sub.level_gain = val; }
                         }
-                    });
 
-                    ui.horizontal(|ui| {
+                        ui.add_space(14.0);
+
                         ui.checkbox(&mut engine.voices[0].noise.enabled, "");
-                        ui.label(RichText::new("NOISE:").color(CyberTheme::TEXT_MUTED).strong());
-                        ui.label(RichText::new("LVL:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].noise.level_gain, 0.0..=1.0).show_value(false)).changed() {
+                        ui.label(RichText::new("NOISE:").color(CyberTheme::TEXT_MUTED).strong().size(11.0));
+                        if draw_rotary_knob(ui, &mut engine.voices[0].noise.level_gain, 0.0..=1.0, "NOISE LVL", CyberTheme::TEXT_MUTED).changed() {
                             let val = engine.voices[0].noise.level_gain;
                             for v in engine.voices.iter_mut() { v.noise.level_gain = val; }
                         }
@@ -438,23 +407,19 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 ui.group(|ui| {
                     ui.label(RichText::new("AMP ADSR ENVELOPE").color(CyberTheme::TEXT_PRIMARY).strong().size(11.0));
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("A:").size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].amp_env.attack_s, 0.001..=5.0).logarithmic(true).show_value(false)).changed() {
+                        if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.attack_s, 0.001..=5.0, "ATTACK", CyberTheme::NEON_PURPLE).changed() {
                             let val = engine.voices[0].amp_env.attack_s;
                             for v in engine.voices.iter_mut() { v.amp_env.attack_s = val; }
                         }
-                        ui.label(RichText::new("D:").size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].amp_env.decay_s, 0.01..=5.0).logarithmic(true).show_value(false)).changed() {
+                        if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.decay_s, 0.01..=5.0, "DECAY", CyberTheme::NEON_PURPLE).changed() {
                             let val = engine.voices[0].amp_env.decay_s;
                             for v in engine.voices.iter_mut() { v.amp_env.decay_s = val; }
                         }
-                        ui.label(RichText::new("S:").size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].amp_env.sustain_level, 0.0..=1.0).show_value(false)).changed() {
+                        if draw_rotary_knob(ui, &mut engine.voices[0].amp_env.sustain_level, 0.0..=1.0, "SUSTAIN", CyberTheme::NEON_PURPLE).changed() {
                             let val = engine.voices[0].amp_env.sustain_level;
                             for v in engine.voices.iter_mut() { v.amp_env.sustain_level = val; }
                         }
-                        ui.label(RichText::new("R:").size(10.0));
-                        if ui.add(Slider::new(&mut engine.voices[0].amp_env.release_s, 0.01..=5.0).logarithmic(true).show_value(false)).changed() {
+                        if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.release_s, 0.01..=5.0, "RELEASE", CyberTheme::NEON_PURPLE).changed() {
                             let val = engine.voices[0].amp_env.release_s;
                             for v in engine.voices.iter_mut() { v.amp_env.release_s = val; }
                         }
@@ -468,7 +433,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                     // Distortion
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut engine.fx.distortion.enabled, "");
-                        ui.label(RichText::new("DISTORTION:").size(10.0).color(CyberTheme::NEON_PINK));
+                        ui.label(RichText::new("DIST:").size(10.0).color(CyberTheme::NEON_PINK));
                         let dist_modes = ["OVERDRIVE", "CRUSHER", "FIRE", "GRIND"];
                         let mut cur_dm = match engine.fx.distortion.mode {
                             DistortionMode::SoftOverdrive => 0,
@@ -478,6 +443,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         };
                         ComboBox::from_id_salt("dist_mode_combo")
                             .selected_text(dist_modes[cur_dm])
+                            .width(82.0)
                             .show_ui(ui, |ui| {
                                 for (i, &name) in dist_modes.iter().enumerate() {
                                     if ui.selectable_value(&mut cur_dm, i, name).clicked() {
@@ -485,38 +451,31 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                                     }
                                 }
                             });
-                        ui.label(RichText::new("AMT:").size(10.0));
-                        ui.add(Slider::new(&mut engine.fx.distortion.amount, 0.0..=1.0).show_value(false));
+                        draw_rotary_knob(ui, &mut engine.fx.distortion.amount, 0.0..=1.0, "DRIVE", CyberTheme::NEON_PINK);
                     });
 
                     // Chorus
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut engine.fx.chorus.enabled, "");
                         ui.label(RichText::new("CHORUS:").size(10.0).color(CyberTheme::NEON_CYAN));
-                        ui.label(RichText::new("MIX:").size(10.0));
-                        ui.add(Slider::new(&mut engine.fx.chorus.mix, 0.0..=1.0).show_value(false));
-                        ui.label(RichText::new("RATE:").size(10.0));
-                        ui.add(Slider::new(&mut engine.fx.chorus.rate_hz, 0.1..=8.0).show_value(false));
+                        draw_rotary_knob(ui, &mut engine.fx.chorus.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_CYAN);
+                        draw_rotary_knob(ui, &mut engine.fx.chorus.rate_hz, 0.1..=8.0, "RATE", CyberTheme::NEON_CYAN);
                     });
 
                     // Delay
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut engine.fx.delay.enabled, "");
-                        ui.label(RichText::new("PING-PONG DELAY:").size(10.0).color(CyberTheme::NEON_AMBER));
-                        ui.label(RichText::new("MIX:").size(10.0));
-                        ui.add(Slider::new(&mut engine.fx.delay.mix, 0.0..=1.0).show_value(false));
-                        ui.label(RichText::new("FB:").size(10.0));
-                        ui.add(Slider::new(&mut engine.fx.delay.feedback, 0.0..=0.9).show_value(false));
+                        ui.label(RichText::new("P-P DELAY:").size(10.0).color(CyberTheme::NEON_AMBER));
+                        draw_rotary_knob(ui, &mut engine.fx.delay.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_AMBER);
+                        draw_rotary_knob(ui, &mut engine.fx.delay.feedback, 0.0..=0.9, "FDBK", CyberTheme::NEON_AMBER);
                     });
 
                     // Reverb
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut engine.fx.reverb.enabled, "");
-                        ui.label(RichText::new("DIFFUSION REVERB:").size(10.0).color(CyberTheme::NEON_PURPLE));
-                        ui.label(RichText::new("SIZE:").size(10.0));
-                        ui.add(Slider::new(&mut engine.fx.reverb.room_size, 0.0..=1.0).show_value(false));
-                        ui.label(RichText::new("MIX:").size(10.0));
-                        ui.add(Slider::new(&mut engine.fx.reverb.mix, 0.0..=1.0).show_value(false));
+                        ui.label(RichText::new("REVERB:").size(10.0).color(CyberTheme::NEON_PURPLE));
+                        draw_rotary_knob(ui, &mut engine.fx.reverb.room_size, 0.0..=1.0, "ROOM", CyberTheme::NEON_PURPLE);
+                        draw_rotary_knob(ui, &mut engine.fx.reverb.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_PURPLE);
                     });
 
                     // Trance Gate
