@@ -43,7 +43,7 @@ impl Default for ReplicatWave {
 impl Default for ReplicatWaveParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1020, 560),
+            editor_state: EguiState::from_size(1024, 700),
             gain: FloatParam::new(
                 "Master Gain",
                 util::db_to_gain(0.0),

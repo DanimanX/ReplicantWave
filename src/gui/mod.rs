@@ -59,15 +59,15 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 RichText::new("⚡ REPLICATWAVE ⚡")
                     .color(CyberTheme::NEON_CYAN)
                     .strong()
-                    .size(17.0),
+                    .size(15.0),
             );
             ui.label(
-                RichText::new("// CYBERPUNK WAVETABLE SYNTH // 64-STEP MATRIX")
+                RichText::new("// CYBERPUNK SYNTH")
                     .color(CyberTheme::TEXT_DIM)
                     .size(10.0),
             );
 
-            ui.add_space(16.0);
+            ui.add_space(8.0);
 
             // Preset Selector
             if ui.button(RichText::new("◀").color(CyberTheme::NEON_CYAN)).clicked() {
@@ -148,7 +148,8 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
             // ---------------------------------------------------------------------
             ui.group(|ui| {
                 ui.set_width(320.0);
-                ui.label(RichText::new("⚡ OSCILLATORS").color(CyberTheme::NEON_CYAN).strong());
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("⚡ OSCILLATORS").color(CyberTheme::NEON_CYAN).strong());
 
                 // --- OSC 1 ---
                 ui.group(|ui| {
@@ -304,6 +305,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         }
                     });
                 });
+                });
             });
 
             // ---------------------------------------------------------------------
@@ -311,9 +313,9 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
             // ---------------------------------------------------------------------
             ui.group(|ui| {
                 ui.set_width(330.0);
-
-                // Live Oscilloscope Display
-                ui.label(RichText::new("⚡ NEON OSCILLOSCOPE").color(CyberTheme::NEON_CYAN).strong());
+                ui.vertical(|ui| {
+                    // Live Oscilloscope Display
+                    ui.label(RichText::new("⚡ NEON OSCILLOSCOPE").color(CyberTheme::NEON_CYAN).strong());
                 let samples: Vec<f32> = {
                     let scope = engine.scope_data.lock();
                     scope.buffer.to_vec()
@@ -421,6 +423,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         }
                     });
                 });
+                });
             });
 
             // ---------------------------------------------------------------------
@@ -428,7 +431,8 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
             // ---------------------------------------------------------------------
             ui.group(|ui| {
                 ui.set_width(330.0);
-                ui.label(RichText::new("⚡ MODULATION & FX").color(CyberTheme::NEON_PURPLE).strong());
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("⚡ MODULATION & FX").color(CyberTheme::NEON_PURPLE).strong());
 
                 // Amp ADSR
                 ui.group(|ui| {
@@ -520,6 +524,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         ui.checkbox(&mut engine.fx.gate.enabled, "");
                         ui.label(RichText::new("TRANCE GATE (CHOPPER)").size(10.0).color(CyberTheme::NEON_LIME));
                     });
+                });
                 });
             });
         });

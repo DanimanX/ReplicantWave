@@ -244,9 +244,7 @@ fn draw_single_step_column(
             [width, 16.0],
             Slider::new(&mut step.note_offset, -24..=24).show_value(false),
         );
-        ui.centered_and_justified(|ui| {
-            ui.label(nih_plug_egui::egui::RichText::new(note_label).size(10.0).color(CyberTheme::NEON_CYAN));
-        });
+        ui.label(nih_plug_egui::egui::RichText::new(note_label).size(10.0).color(CyberTheme::NEON_CYAN));
 
         // Velocity slider (1 to 127)
         ui.add_sized(

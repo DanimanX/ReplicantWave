@@ -7,7 +7,11 @@
 ![Architecture](https://img.shields.io/badge/DSP-Zero--Allocation_SIMD-39ff14?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT-ff007f?style=for-the-badge)
 
-<br/>
+<br/><br/>
+
+<img src="assets/replicatwave_gui.png" alt="ReplicatWave Cyberpunk Wavetable Synthesizer" width="920" />
+
+<br/><br/>
 
 [![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?logo=paypal&logoColor=white&style=for-the-badge)](https://paypal.me/DanimanX?locale.x=en_US&country.x=CL)
 
