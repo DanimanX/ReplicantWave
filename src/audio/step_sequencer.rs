@@ -1,4 +1,5 @@
-//! 64-step pattern sequencer with sliding bar navigation, swing, accent, slide, and gate.
+//! 64-step pattern sequencer with sliding viewport navigation, swing, accent, slide, and gate.
+//! Features sample-accurate host DAW synchronization and standalone MIDI key-trigger bridging.
 
 use serde::{Deserialize, Serialize};
 
@@ -117,6 +118,8 @@ pub struct StepSequencer {
     pub swing: f32,          // 0.0 to 0.75
     pub running: bool,
     pub host_sync: bool,     // Auto-trigger when host DAW transport is playing
+    pub key_trigger: bool,   // Retrigger and transpose sequence on incoming MIDI notes
+    pub latch: bool,         // Keep playing even after key release
     pub mode: SeqMode,
     pub octave: i8,          // -2 to +2
     pub root_note: u8,       // Base MIDI note (e.g. 36 = C2)
@@ -135,11 +138,11 @@ pub struct StepSequencer {
 impl Default for StepSequencer {
     fn default() -> Self {
         let mut steps = [Step::default(); MAX_STEPS];
-        // Create an energetic cyberpunk default sequence
+        // Create an energetic cyberpunk default sequence spanning up to 64 steps
         for (i, step) in steps.iter_mut().enumerate() {
-            step.gate = i % 2 == 0 || i % 7 == 0 || i == 15 || i == 31;
+            step.gate = i % 2 == 0 || i % 7 == 0 || i == 15 || i == 31 || i == 47 || i == 63;
             step.accent = i % 4 == 0;
-            step.slide = i == 6 || i == 14 || i == 22 || i == 30;
+            step.slide = i == 6 || i == 14 || i == 22 || i == 30 || i == 38 || i == 46 || i == 54 || i == 62;
             step.note_offset = match i % 8 {
                 0 => 0,
                 1 => 0,
@@ -155,11 +158,13 @@ impl Default for StepSequencer {
 
         Self {
             steps,
-            length: 16,
+            length: 64, // Default to full 64 steps for maximum pattern capability!
             rate: SeqRate::Rate1_16,
             swing: 0.0,
             running: false,
             host_sync: true,
+            key_trigger: true,
+            latch: false,
             mode: SeqMode::InternalSynth,
             octave: 0,
             root_note: 36, // C2
@@ -181,6 +186,14 @@ impl StepSequencer {
         self.sample_rate = sr.max(1000.0);
     }
 
+    pub fn is_active_for_synth(&self) -> bool {
+        self.mode == SeqMode::InternalSynth && (self.running || self.key_trigger)
+    }
+
+    pub fn set_root_note(&mut self, note: u8) {
+        self.root_note = note;
+    }
+
     pub fn reset(&mut self) {
         self.current_step = 0;
         self.sample_counter = 0.0;
@@ -191,11 +204,19 @@ impl StepSequencer {
         self.gate_released = false;
     }
 
+    #[inline(always)]
+    pub fn is_playback_running(&self, host_playing: bool) -> bool {
+        if self.mode == SeqMode::Off {
+            return false;
+        }
+        self.running || (self.host_sync && host_playing)
+    }
+
     /// Advance one sample. Returns event: `Trigger`, `Release`, or `None`.
     #[inline(always)]
     pub fn process_sample(&mut self, host_bpm: f32, host_playing: bool) -> SeqStepEvent {
-        let is_running = self.running || (self.host_sync && host_playing);
-        if !is_running || self.mode == SeqMode::Off {
+        let is_running = self.is_playback_running(host_playing);
+        if !is_running {
             self.step_just_triggered = false;
             if let Some(note) = self.current_sounding_note.take() {
                 return SeqStepEvent::Release { note };
@@ -203,7 +224,12 @@ impl StepSequencer {
             return SeqStepEvent::None;
         }
 
-        let effective_bpm = if self.host_sync && host_bpm > 30.0 { host_bpm } else { self.internal_bpm }.max(30.0);
+        let effective_bpm = if self.host_sync && host_bpm > 30.0 {
+            host_bpm
+        } else {
+            self.internal_bpm
+        }.clamp(30.0, 300.0);
+
         let beats_per_sec = effective_bpm * (1.0 / 60.0);
         let base_step_time = self.rate.to_beat_fraction() / beats_per_sec;
         let base_step_samples = base_step_time * self.sample_rate;
@@ -216,7 +242,7 @@ impl StepSequencer {
         };
 
         let step_samples = (base_step_samples * swing_factor).max(64.0);
-        let gate_samples = step_samples * 0.65; // 65% gate ratio for crisp articulation
+        let gate_samples = step_samples * 0.68; // 68% gate ratio for crisp, punchy articulation
 
         // Immediate first step trigger upon playback start
         if self.first_step_pending {
@@ -258,7 +284,8 @@ impl StepSequencer {
         self.sample_counter += 1.0;
         if self.sample_counter >= step_samples {
             self.sample_counter = 0.0;
-            self.current_step = (self.current_step + 1) % self.length.max(1).min(MAX_STEPS);
+            let len = self.length.clamp(1, MAX_STEPS);
+            self.current_step = (self.current_step + 1) % len;
             self.step_just_triggered = true;
             self.gate_released = false;
 
@@ -278,6 +305,9 @@ impl StepSequencer {
                     slide: step.slide,
                     accent: step.accent,
                 };
+            } else if let Some(note) = self.current_sounding_note.take() {
+                // If this step has no gate, release any hanging tied/slide note
+                return SeqStepEvent::Release { note };
             }
         } else {
             self.step_just_triggered = false;

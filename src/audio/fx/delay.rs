@@ -73,11 +73,14 @@ impl StereoDelay {
 
         let delay_samples = (delay_sec * sr).clamp(10.0, (buf_len - 100) as f32);
 
-        // Read delay lines
-        let read_pos = (self.write_idx as f32 + buf_len as f32 - delay_samples) % buf_len as f32;
-        let idx0 = read_pos.floor() as usize % buf_len;
-        let idx1 = (idx0 + 1) % buf_len;
-        let frac = read_pos - read_pos.floor();
+        // Read delay lines with fast indexing
+        let mut read_pos = self.write_idx as f32 + buf_len as f32 - delay_samples;
+        if read_pos >= buf_len as f32 {
+            read_pos -= buf_len as f32;
+        }
+        let idx0 = read_pos as usize;
+        let idx1 = if idx0 + 1 >= buf_len { 0 } else { idx0 + 1 };
+        let frac = read_pos - idx0 as f32;
 
         let wet_l = self.buffer_l[idx0] + frac * (self.buffer_l[idx1] - self.buffer_l[idx0]);
         let wet_r = self.buffer_r[idx0] + frac * (self.buffer_r[idx1] - self.buffer_r[idx0]);
@@ -102,7 +105,10 @@ impl StereoDelay {
         self.buffer_l[self.write_idx] = next_in_l;
         self.buffer_r[self.write_idx] = next_in_r;
 
-        self.write_idx = (self.write_idx + 1) % buf_len;
+        self.write_idx += 1;
+        if self.write_idx >= buf_len {
+            self.write_idx = 0;
+        }
 
         let dry_gain = 1.0 - self.mix * 0.5;
         let wet_gain = self.mix;

@@ -1,5 +1,6 @@
 //! Cytomic State-Variable Filter (SVF) with zero-delay feedback (ZDF).
 //! Modes: LP 12dB, LP 24dB (two-stage), HP 12dB, HP 24dB, BP 12dB, BP 24dB, Notch.
+//! Highly optimized with parameter delta thresholding to minimize trigonometric evaluations.
 
 use std::f32::consts::PI;
 
@@ -48,6 +49,19 @@ pub struct StereoFilter {
     s2_l: [f32; 2],
     s1_r: [f32; 2],
     s2_r: [f32; 2],
+
+    // Cached precalculated coefficients for low CPU
+    cached_cutoff: f32,
+    cached_reso: f32,
+    cached_sr: f32,
+    cached_a1: f32,
+    cached_a2: f32,
+    cached_a3: f32,
+    cached_k: f32,
+
+    cached_drive_in: f32,
+    cached_drive: f32,
+    cached_inv_drive: f32,
 }
 
 impl Default for StereoFilter {
@@ -69,6 +83,16 @@ impl Default for StereoFilter {
             s2_l: [0.0; 2],
             s1_r: [0.0; 2],
             s2_r: [0.0; 2],
+            cached_cutoff: -1.0,
+            cached_reso: -1.0,
+            cached_sr: -1.0,
+            cached_a1: 0.0,
+            cached_a2: 0.0,
+            cached_a3: 0.0,
+            cached_k: 0.0,
+            cached_drive_in: -1.0,
+            cached_drive: 1.0,
+            cached_inv_drive: 1.0,
         }
     }
 }
@@ -81,7 +105,7 @@ impl StereoFilter {
         self.s2_r = [0.0; 2];
     }
 
-    /// Process one stereo sample.
+    /// Process one stereo sample with cached SVF coefficients.
     #[inline(always)]
     pub fn process_sample(
         &mut self,
@@ -97,27 +121,50 @@ impl StereoFilter {
         // Clamp cutoff to safe audible range below Nyquist
         let target_cutoff = mod_cutoff_hz.clamp(20.0, sample_rate * 0.48);
 
-        // Prewarp frequency for bilinear transform: g = tan(pi * fc / fs)
-        let w = PI * target_cutoff / sample_rate;
-        // Fast tangent for audio filter range
-        let g = if w < 0.6 {
-            w * (1.0 + w * w * 0.33333333)
-        } else {
-            w.tan()
-        };
+        // Update filter coefficients only when cutoff, resonance, or sample rate change
+        if (target_cutoff - self.cached_cutoff).abs() > 0.5
+            || (self.resonance - self.cached_reso).abs() > 0.002
+            || (sample_rate - self.cached_sr).abs() > 1.0
+        {
+            self.cached_cutoff = target_cutoff;
+            self.cached_reso = self.resonance;
+            self.cached_sr = sample_rate;
 
-        // Q from resonance (0.0 to 1.0 -> 0.707 to 20.0)
-        let q = 0.707 + self.resonance.clamp(0.0, 1.0) * 19.3;
-        let k = 1.0 / q;
+            // Prewarp frequency for bilinear transform: g = tan(pi * fc / fs)
+            let w = PI * target_cutoff / sample_rate;
+            let g = if w < 0.6 {
+                w * (1.0 + w * w * 0.33333333)
+            } else {
+                w.tan()
+            };
 
-        // Precompute stage coefficients once per sample pair
-        let a1 = 1.0 / (1.0 + g * (g + k));
-        let a2 = g * a1;
-        let a3 = g * a2;
+            let q = 0.707 + self.resonance.clamp(0.0, 1.0) * 19.3;
+            let k = 1.0 / q;
 
-        // Drive saturation factor
-        let drive = self.drive.clamp(1.0, 5.0);
-        let inv_drive = 1.0 / drive.sqrt();
+            let a1 = 1.0 / (1.0 + g * (g + k));
+            let a2 = g * a1;
+            let a3 = g * a2;
+
+            self.cached_a1 = a1;
+            self.cached_a2 = a2;
+            self.cached_a3 = a3;
+            self.cached_k = k;
+        }
+
+        // Cache drive factors
+        if (self.drive - self.cached_drive_in).abs() > 0.01 {
+            self.cached_drive_in = self.drive;
+            let d = self.drive.clamp(1.0, 5.0);
+            self.cached_drive = d;
+            self.cached_inv_drive = 1.0 / d.sqrt();
+        }
+
+        let a1 = self.cached_a1;
+        let a2 = self.cached_a2;
+        let a3 = self.cached_a3;
+        let k = self.cached_k;
+        let drive = self.cached_drive;
+        let inv_drive = self.cached_inv_drive;
 
         let out_l = self.process_channel(in_l * drive, a1, a2, a3, k, 0) * inv_drive;
         let out_r = self.process_channel(in_r * drive, a1, a2, a3, k, 1) * inv_drive;

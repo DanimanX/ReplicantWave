@@ -149,14 +149,14 @@ impl Plugin for ReplicantWave {
             .map(|t| t as f32)
             .unwrap_or(0.0);
 
-        // Process incoming MIDI events
+        // Process incoming MIDI events with smart 64-step sequencer bridging
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { note, velocity, .. } => {
-                    engine.note_on(note, velocity);
+                    engine.handle_midi_note_on(note, velocity);
                 }
                 NoteEvent::NoteOff { note, .. } => {
-                    engine.note_off(note);
+                    engine.handle_midi_note_off(note);
                 }
                 NoteEvent::MidiPitchBend { value, .. } => {
                     // value is -1.0 to 1.0
@@ -209,4 +209,4 @@ impl Vst3Plugin for ReplicantWave {
 }
 
 nih_export_clap!(ReplicantWave);
-nih_export_vst3!(ReplicantWave);
+nih_export_vst3!{ReplicantWave}

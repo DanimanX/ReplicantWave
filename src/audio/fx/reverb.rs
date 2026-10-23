@@ -53,7 +53,10 @@ impl CombFilter {
         let output = self.buffer[self.buf_idx];
         self.filter_store = output * self.damp2 + self.filter_store * self.damp1;
         self.buffer[self.buf_idx] = input + self.filter_store * self.feedback;
-        self.buf_idx = (self.buf_idx + 1) % self.buf_size;
+        self.buf_idx += 1;
+        if self.buf_idx >= self.buf_size {
+            self.buf_idx = 0;
+        }
         output
     }
 }
@@ -86,7 +89,10 @@ impl AllpassFilter {
         let buf_out = self.buffer[self.buf_idx];
         let output = -input + buf_out;
         self.buffer[self.buf_idx] = input + (buf_out * self.feedback);
-        self.buf_idx = (self.buf_idx + 1) % self.buf_size;
+        self.buf_idx += 1;
+        if self.buf_idx >= self.buf_size {
+            self.buf_idx = 0;
+        }
         output
     }
 }

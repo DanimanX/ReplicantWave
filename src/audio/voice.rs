@@ -30,6 +30,8 @@ pub struct Voice {
     pub age: u64,
     pub active_midi_note: u8,
     sample_rate: f32,
+    cached_note: f32,
+    cached_freq: f32,
 }
 
 impl Default for Voice {
@@ -67,6 +69,8 @@ impl Default for Voice {
             age: 0,
             active_midi_note: 60,
             sample_rate: 44100.0,
+            cached_note: -999.0,
+            cached_freq: 440.0,
         }
     }
 }
@@ -155,11 +159,19 @@ impl Voice {
         }
 
         let effective_note = self.current_note + pitch_bend_semitones;
-        // MIDI note to Hz formula using fast exp2
-        let base_freq = 440.0 * ((effective_note - 69.0) * (1.0 / 12.0)).exp2();
+        if (effective_note - self.cached_note).abs() > 0.005 {
+            self.cached_note = effective_note;
+            self.cached_freq = 440.0 * ((effective_note - 69.0) * (1.0 / 12.0)).exp2();
+        }
+        let base_freq = self.cached_freq;
 
         // Process envelopes & LFOs
         let amp_level = self.amp_env.process_sample();
+        if amp_level <= 0.00001 && self.is_releasing {
+            self.kill();
+            return (0.0, 0.0);
+        }
+
         let f_env_val = self.filter_env.process_sample();
         let _m_env_val = self.mod_env.process_sample();
         let lfo1_val = self.lfo1.process_sample(host_bpm);

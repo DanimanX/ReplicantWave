@@ -6,6 +6,7 @@ pub mod wavetable_view;
 
 use crate::audio::filter::FilterType;
 use crate::audio::fx::distortion::DistortionMode;
+use crate::audio::step_sequencer::SeqMode;
 use crate::audio::SynthEngine;
 use crate::presets::factory::get_factory_presets;
 use crate::presets::SynthPreset;
@@ -109,6 +110,30 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                     .color(CyberTheme::NEON_LIME)
                     .size(11.0),
             );
+
+            ui.add_space(8.0);
+
+            // Master 64-Step Pattern Sequencer Quick Toggle
+            let seq_active = engine.sequencer.is_playback_running(true);
+            let seq_text = if seq_active { "⚡ SEQ: ON" } else { "⚡ SEQ: OFF" };
+            let seq_btn = Button::new(
+                RichText::new(seq_text)
+                    .color(if seq_active { Color32::from_rgb(10, 11, 16) } else { CyberTheme::TEXT_PRIMARY })
+                    .strong()
+                    .size(10.5),
+            )
+            .fill(if seq_active { CyberTheme::NEON_LIME } else { CyberTheme::BG_RECESSED })
+            .stroke(Stroke::new(1.0_f32, if seq_active { CyberTheme::NEON_LIME } else { CyberTheme::BORDER_DARK }));
+
+            if ui.add(seq_btn).clicked() {
+                if engine.sequencer.mode == SeqMode::Off {
+                    engine.sequencer.mode = SeqMode::InternalSynth;
+                }
+                engine.sequencer.running = !engine.sequencer.running;
+                if engine.sequencer.running {
+                    engine.sequencer.reset();
+                }
+            }
 
             ui.add_space(8.0);
 

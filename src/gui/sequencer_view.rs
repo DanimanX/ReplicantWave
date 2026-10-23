@@ -1,9 +1,10 @@
-//! 64-Step Sequencer Drawer with sliding navigation bar, matching Replicant303 style.
+//! 64-Step Pattern Sequencer Drawer with analog rotary dial navigation, swing, accent, slide, and gate.
+//! Authentic analog hardware controls with zero generic bars or sliders.
 
-use super::knob::{draw_rotary_knob, draw_rotary_knob_i8, draw_rotary_knob_u8};
+use super::knob::{draw_rotary_knob, draw_rotary_knob_i8, draw_rotary_knob_u8, draw_rotary_knob_usize};
 use super::theme::CyberTheme;
 use crate::audio::step_sequencer::{SeqMode, SeqRate, Step, StepSequencer, MAX_STEPS};
-use nih_plug_egui::egui::{Button, Sense, Slider, Stroke, Ui, Vec2};
+use nih_plug_egui::egui::{Button, Sense, Stroke, Ui, Vec2};
 
 pub struct SequencerUiState {
     pub is_drawer_open: bool,
@@ -38,9 +39,20 @@ pub fn draw_sequencer_drawer(
             state.sliding_bar_pos = active_page;
         }
 
-        // 1. HEADER TAB: Clickable sliding drawer handle
+        // 1. HEADER TAB: Clickable drawer handle with live telemetry
+        let status_str = if seq.is_playback_running(true) {
+            "● RUNNING"
+        } else {
+            "○ STOPPED"
+        };
         let arrow = if state.is_drawer_open { "▲ COLLAPSE" } else { "▼ EXPAND [64 STEPS]" };
-        let tab_text = format!("⚡ 64-STEP PATTERN SEQUENCER // {} ⚡", arrow);
+        let tab_text = format!(
+            "⚡ 64-STEP PATTERN SEQUENCER // {} // STEP {:02}/{} // {} ⚡",
+            status_str,
+            (active_step % seq.length.max(1)) + 1,
+            seq.length,
+            arrow
+        );
 
         let tab_btn = Button::new(tab_text)
             .fill(if state.is_drawer_open { CyberTheme::BG_PANEL_ALT } else { CyberTheme::BG_RECESSED })
@@ -56,9 +68,9 @@ pub fn draw_sequencer_drawer(
 
         ui.add_space(4.0);
 
-        // 2. TOP TOOLBAR: Play/Stop, Host Sync, Mode, Length, Rate, BPM, Swing, Follow, Random, Clear
+        // 2. TOP TOOLBAR: Play/Stop, DAW Sync, Key Trig, Latch, Mode, Length, Rate, Knobs, Follow, Random, Clear
         ui.horizontal(|ui| {
-            // Play / Stop
+            // Play / Stop Manual Toggle
             let play_color = if seq.running { CyberTheme::NEON_LIME } else { CyberTheme::TEXT_MUTED };
             let play_btn = Button::new(if seq.running { "■ STOP" } else { "▶ PLAY" })
                 .fill(CyberTheme::BG_RECESSED)
@@ -72,17 +84,35 @@ pub fn draw_sequencer_drawer(
 
             // Host Sync Toggle
             let sync_color = if seq.host_sync { CyberTheme::NEON_CYAN } else { CyberTheme::TEXT_MUTED };
-            let sync_btn = Button::new(if seq.host_sync { "SYNC: DAW" } else { "SYNC: FREE" })
+            let sync_btn = Button::new(if seq.host_sync { "DAW SYNC" } else { "FREE RUN" })
                 .fill(CyberTheme::BG_RECESSED)
                 .stroke(Stroke::new(1.0_f32, sync_color));
             if ui.add(sync_btn).clicked() {
                 seq.host_sync = !seq.host_sync;
             }
 
+            // Key Trigger Toggle
+            let key_color = if seq.key_trigger { CyberTheme::NEON_AMBER } else { CyberTheme::TEXT_MUTED };
+            let key_btn = Button::new(if seq.key_trigger { "KEY TRIG" } else { "NO TRIG" })
+                .fill(CyberTheme::BG_RECESSED)
+                .stroke(Stroke::new(1.0_f32, key_color));
+            if ui.add(key_btn).clicked() {
+                seq.key_trigger = !seq.key_trigger;
+            }
+
+            // Latch Toggle
+            let latch_color = if seq.latch { CyberTheme::NEON_PINK } else { CyberTheme::TEXT_MUTED };
+            let latch_btn = Button::new(if seq.latch { "LATCH" } else { "MOMENT" })
+                .fill(CyberTheme::BG_RECESSED)
+                .stroke(Stroke::new(1.0_f32, latch_color));
+            if ui.add(latch_btn).clicked() {
+                seq.latch = !seq.latch;
+            }
+
             ui.separator();
 
-            // Mode
-            ui.label(nih_plug_egui::egui::RichText::new("MODE:").color(CyberTheme::TEXT_MUTED).size(11.0));
+            // Mode Selector
+            ui.label(nih_plug_egui::egui::RichText::new("MODE:").color(CyberTheme::TEXT_MUTED).size(10.5));
             let mode_names = ["SYNTH", "CUTOFF", "WT POS", "OFF"];
             for (idx, &name) in mode_names.iter().enumerate() {
                 let is_sel = seq.mode == SeqMode::from_index(idx);
@@ -96,8 +126,8 @@ pub fn draw_sequencer_drawer(
 
             ui.separator();
 
-            // Length (16, 32, 48, 64)
-            ui.label(nih_plug_egui::egui::RichText::new("LEN:").color(CyberTheme::TEXT_MUTED).size(11.0));
+            // Pattern Length: 16, 32, 48, 64
+            ui.label(nih_plug_egui::egui::RichText::new("LEN:").color(CyberTheme::TEXT_MUTED).size(10.5));
             for &l in &[16, 32, 48, 64] {
                 let is_cur_len = seq.length == l;
                 let btn = Button::new(format!("{}", l))
@@ -110,8 +140,8 @@ pub fn draw_sequencer_drawer(
 
             ui.separator();
 
-            // Rate
-            ui.label(nih_plug_egui::egui::RichText::new("RATE:").color(CyberTheme::TEXT_MUTED).size(11.0));
+            // Rate (Timing Divisions)
+            ui.label(nih_plug_egui::egui::RichText::new("RATE:").color(CyberTheme::TEXT_MUTED).size(10.5));
             for idx in 0..7 {
                 let r = SeqRate::from_index(idx);
                 let is_sel = seq.rate == r;
@@ -125,13 +155,13 @@ pub fn draw_sequencer_drawer(
 
             ui.separator();
 
-            // Rotary Knobs: BPM & SWING
+            // Analog Rotary Knobs: BPM & SWING
             draw_rotary_knob(ui, &mut seq.internal_bpm, 40.0..=240.0, "BPM", CyberTheme::NEON_CYAN);
             draw_rotary_knob(ui, &mut seq.swing, 0.0..=0.75, "SWING", CyberTheme::NEON_AMBER);
 
             ui.separator();
 
-            // Follow playhead toggle
+            // Follow Playhead Toggle
             let follow_color = if state.auto_page_follow { CyberTheme::NEON_LIME } else { CyberTheme::TEXT_MUTED };
             let follow_btn = Button::new("FOLLOW")
                 .fill(CyberTheme::BG_RECESSED)
@@ -140,7 +170,7 @@ pub fn draw_sequencer_drawer(
                 state.auto_page_follow = !state.auto_page_follow;
             }
 
-            // Utility buttons
+            // Utilities: Randomize & Clear
             if ui.button("🎲 RND").clicked() {
                 let seed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -153,11 +183,11 @@ pub fn draw_sequencer_drawer(
             }
         });
 
-        ui.add_space(6.0);
+        ui.add_space(4.0);
 
-        // 3. SLIDING NAVIGATION BAR (The sliding bar requested like Replicant303)
+        // 3. 64-STEP VIEWPORT NAVIGATION: ANALOG ROTARY DIAL & QUICK PAGE BUTTONS (NO SLIDERS/BARS)
         ui.horizontal(|ui| {
-            ui.label(nih_plug_egui::egui::RichText::new("VIEWPORT [0..64]:").color(CyberTheme::NEON_AMBER).size(11.0));
+            ui.label(nih_plug_egui::egui::RichText::new("PAGE [64 STEPS]:").color(CyberTheme::NEON_AMBER).size(11.0).strong());
 
             // Quick Page Buttons
             let pages = [(0.0, "1-16"), (16.0, "17-32"), (32.0, "33-48"), (48.0, "49-64")];
@@ -174,19 +204,22 @@ pub fn draw_sequencer_drawer(
 
             ui.add_space(8.0);
 
-            // Smooth Horizontal Sliding Bar
-            ui.label(nih_plug_egui::egui::RichText::new("SLIDE:").color(CyberTheme::TEXT_MUTED).size(11.0));
-            if ui.add_sized(
-                [ui.available_width() - 10.0, 18.0],
-                Slider::new(&mut state.sliding_bar_pos, 0.0..=48.0)
-                    .show_value(false)
-                    .text(""),
-            ).changed() {
+            // Analog Rotary Dial for Viewport scrolling across all 64 steps
+            let mut page_pos = state.sliding_bar_pos.round() as usize;
+            if draw_rotary_knob_usize(ui, &mut page_pos, 0..=48, "VIEW [0..48]", CyberTheme::NEON_AMBER).changed() {
+                state.sliding_bar_pos = page_pos as f32;
                 state.auto_page_follow = false;
             }
+
+            ui.add_space(8.0);
+            let cur_start = state.sliding_bar_pos.round() as usize + 1;
+            let cur_end = (cur_start + 15).min(64);
+            ui.label(nih_plug_egui::egui::RichText::new(format!("// VIEWING STEPS {:02}..{:02} OF 64", cur_start, cur_end))
+                .color(CyberTheme::TEXT_MUTED)
+                .size(10.5));
         });
 
-        ui.add_space(4.0);
+        ui.add_space(2.0);
 
         // 4. 16 VISIBLE STEPS GRID: mapped from sliding_bar_pos
         let start_step = (state.sliding_bar_pos.round() as usize).min(48);
@@ -203,7 +236,7 @@ pub fn draw_sequencer_drawer(
                     break;
                 }
 
-                let is_current = seq.running && active_step == step_idx;
+                let is_current = seq.is_playback_running(true) && (active_step % seq.length.max(1)) == step_idx;
                 let is_in_length = step_idx < seq.length;
 
                 draw_single_step_column(
@@ -248,7 +281,7 @@ fn draw_single_step_column(
         };
 
         ui.horizontal(|ui| {
-            // Little LED square
+            // LED square
             let (rect, _) = ui.allocate_exact_size(Vec2::new(8.0, 8.0), Sense::hover());
             ui.painter().rect_filled(rect, 1.0, led_color);
             ui.label(nih_plug_egui::egui::RichText::new(format!("{:02}", step_num + 1)).size(10.0).color(num_color));
@@ -267,7 +300,7 @@ fn draw_single_step_column(
             step.gate = !step.gate;
         }
 
-        // Note pitch rotary knob (-24 to +24 semitones)
+        // Note pitch analog rotary knob (-24 to +24 semitones) with musical note name
         let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
         let base_note = 36 + step.note_offset as i32; // Centered around C2
         let name_idx = (base_note % 12).abs() as usize;
@@ -276,7 +309,7 @@ fn draw_single_step_column(
 
         draw_rotary_knob_i8(ui, &mut step.note_offset, -24..=24, &note_label, CyberTheme::NEON_CYAN);
 
-        // Velocity rotary knob (1 to 127)
+        // Velocity analog rotary knob (1 to 127)
         draw_rotary_knob_u8(ui, &mut step.velocity, 1..=127, "VEL", CyberTheme::NEON_AMBER);
 
         // Slide Button

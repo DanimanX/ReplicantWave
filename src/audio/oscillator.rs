@@ -1,4 +1,5 @@
 //! High performance wavetable oscillator, sub-oscillator, and noise generator.
+//! Unison detune and stereo panning are precomputed to eliminate transcendental math in the hot loop.
 
 use super::wavetable::Wavetable;
 use std::f32::consts::PI;
@@ -20,11 +21,23 @@ pub struct WavetableOscillator {
     pub pan: f32,
     pub formant: f32,
     pub bend: f32,
+
+    // Precalculated unison tables
+    cached_unison: usize,
+    cached_detune: f32,
+    cached_spread: f32,
+    cached_pan: f32,
+    cached_detune_ratios: [f32; MAX_UNISON],
+    cached_unison_gl: [f32; MAX_UNISON],
+    cached_unison_gr: [f32; MAX_UNISON],
+
+    cached_semitones: f32,
+    cached_pitch_mult: f32,
 }
 
 impl Default for WavetableOscillator {
     fn default() -> Self {
-        Self {
+        let mut osc = Self {
             phases: [0.0; MAX_UNISON],
             enabled: true,
             retrigger: true,
@@ -38,7 +51,18 @@ impl Default for WavetableOscillator {
             pan: 0.0,
             formant: 0.0,
             bend: 0.0,
-        }
+            cached_unison: 0,
+            cached_detune: -1.0,
+            cached_spread: -1.0,
+            cached_pan: -99.0,
+            cached_detune_ratios: [1.0; MAX_UNISON],
+            cached_unison_gl: [1.0; MAX_UNISON],
+            cached_unison_gr: [1.0; MAX_UNISON],
+            cached_semitones: -999.0,
+            cached_pitch_mult: 1.0,
+        };
+        osc.update_unison_cache();
+        osc
     }
 }
 
@@ -56,6 +80,36 @@ impl WavetableOscillator {
         }
     }
 
+    #[inline(always)]
+    fn update_unison_cache(&mut self) {
+        let unison = self.unison.clamp(1, MAX_UNISON);
+        self.cached_unison = unison;
+        self.cached_detune = self.detune;
+        self.cached_spread = self.spread;
+        self.cached_pan = self.pan;
+
+        let gain_norm = 1.0 / (unison as f32).sqrt();
+        let inv_unison_m1 = if unison > 1 {
+            1.0 / (unison - 1) as f32
+        } else {
+            1.0
+        };
+        let detune_scaled = self.detune * (1.5 / 12.0);
+
+        for i in 0..unison {
+            let frac = if unison > 1 {
+                (i as f32 * inv_unison_m1) - 0.5
+            } else {
+                0.0
+            };
+            self.cached_detune_ratios[i] = (frac * detune_scaled).exp2();
+            let pan_voice = (self.pan + (frac * 2.0) * self.spread).clamp(-1.0, 1.0);
+            let pan_rad = (pan_voice + 1.0) * (PI * 0.25);
+            self.cached_unison_gl[i] = pan_rad.cos() * gain_norm;
+            self.cached_unison_gr[i] = pan_rad.sin() * gain_norm;
+        }
+    }
+
     /// Process one sample block or sample.
     /// Returns stereo output `(left, right)`.
     #[inline(always)]
@@ -65,8 +119,25 @@ impl WavetableOscillator {
         }
 
         let unison = self.unison.clamp(1, MAX_UNISON);
+
+        // Update unison cache only when parameters change
+        if unison != self.cached_unison
+            || (self.detune - self.cached_detune).abs() > 0.001
+            || (self.spread - self.cached_spread).abs() > 0.001
+            || (self.pan - self.cached_pan).abs() > 0.001
+        {
+            self.update_unison_cache();
+        }
+
+        // Cache pitch multiplier
         let semitones = self.tune_semitones + (self.fine_cents * 0.01);
-        let center_freq = base_freq * (semitones * (1.0 / 12.0)).exp2();
+        if (semitones - self.cached_semitones).abs() > 0.001 {
+            self.cached_semitones = semitones;
+            self.cached_pitch_mult = (semitones * (1.0 / 12.0)).exp2();
+        }
+
+        let center_freq = base_freq * self.cached_pitch_mult;
+        let base_phase_inc = (center_freq / sample_rate).min(0.499);
 
         let has_bend = self.bend.abs() > 0.001;
         let has_formant = self.formant.abs() > 0.001;
@@ -76,9 +147,8 @@ impl WavetableOscillator {
             1.0
         };
 
-        // Ultra-fast path for 1-voice unison (avoids loop, trig & alloc overhead)
+        // Ultra-fast path for 1-voice unison (avoids loop overhead)
         if unison == 1 {
-            let phase_inc = (center_freq / sample_rate).min(0.499);
             let current_phase = self.phases[0];
             let mut p = current_phase;
 
@@ -96,30 +166,20 @@ impl WavetableOscillator {
             }
 
             let s = wt.sample(self.position, p);
-            let next_phase = current_phase + phase_inc;
+            let next_phase = current_phase + base_phase_inc;
             self.phases[0] = next_phase - next_phase.floor();
 
-            let pan_rad = (self.pan.clamp(-1.0, 1.0) + 1.0) * (PI * 0.25);
-            let gl = pan_rad.cos() * self.level_gain;
-            let gr = pan_rad.sin() * self.level_gain;
+            let gl = self.cached_unison_gl[0] * self.level_gain;
+            let gr = self.cached_unison_gr[0] * self.level_gain;
 
             return (s * gl, s * gr);
         }
-
-        // Optimized multi-voice unison with precomputed gains and phase increments
-        let gain_norm = 1.0 / (unison as f32).sqrt();
-        let inv_unison_m1 = 1.0 / (unison - 1) as f32;
-        let detune_scaled = self.detune * (1.5 / 12.0);
 
         let mut out_l = 0.0;
         let mut out_r = 0.0;
 
         for i in 0..unison {
-            let frac = (i as f32 * inv_unison_m1) - 0.5;
-            let detune_ratio = (frac * detune_scaled).exp2();
-            let voice_freq = center_freq * detune_ratio;
-            let phase_inc = (voice_freq / sample_rate).min(0.499);
-
+            let phase_inc = (base_phase_inc * self.cached_detune_ratios[i]).min(0.499);
             let current_phase = self.phases[i];
             let mut p = current_phase;
 
@@ -140,13 +200,8 @@ impl WavetableOscillator {
             let next_phase = current_phase + phase_inc;
             self.phases[i] = next_phase - next_phase.floor();
 
-            let pan_voice = (self.pan + (frac * 2.0) * self.spread).clamp(-1.0, 1.0);
-            let pan_rad = (pan_voice + 1.0) * (PI * 0.25);
-            let gl = pan_rad.cos() * gain_norm;
-            let gr = pan_rad.sin() * gain_norm;
-
-            out_l += s * gl;
-            out_r += s * gr;
+            out_l += s * self.cached_unison_gl[i];
+            out_r += s * self.cached_unison_gr[i];
         }
 
         (out_l * self.level_gain, out_r * self.level_gain)
@@ -210,7 +265,12 @@ impl SubOscillator {
             return (0.0, 0.0);
         }
 
-        let freq = base_freq * 2.0f32.powi(self.octave_offset as i32);
+        let mult = match self.octave_offset {
+            -2 => 0.25,
+            -1 => 0.5,
+            _ => 1.0,
+        };
+        let freq = base_freq * mult;
         let phase_inc = (freq / sample_rate).min(0.499);
 
         let s = match self.wave {
@@ -232,7 +292,7 @@ impl SubOscillator {
 
         self.phase = (self.phase + phase_inc) - (self.phase + phase_inc).floor();
 
-        let pan_rad = (self.pan.clamp(-1.0, 1.0) + 1.0) * (PI / 4.0);
+        let pan_rad = (self.pan.clamp(-1.0, 1.0) + 1.0) * (PI * 0.25);
         let gl = pan_rad.cos() * self.level_gain;
         let gr = pan_rad.sin() * self.level_gain;
 
@@ -329,7 +389,7 @@ impl NoiseGenerator {
             }
         };
 
-        let pan_rad = (self.pan.clamp(-1.0, 1.0) + 1.0) * (PI / 4.0);
+        let pan_rad = (self.pan.clamp(-1.0, 1.0) + 1.0) * (PI * 0.25);
         let gl = pan_rad.cos() * self.level_gain;
         let gr = pan_rad.sin() * self.level_gain;
 

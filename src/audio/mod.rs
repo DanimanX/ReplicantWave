@@ -45,6 +45,8 @@ pub struct SynthEngine {
 
     pub scope_data: Arc<parking_lot::Mutex<ScopeBuffer>>,
     pub active_voice_count: Arc<AtomicUsize>,
+    pub held_midi_keys: usize,
+    last_host_playing: bool,
     next_voice_age: u64,
     last_note: u8,
     sample_rate: f32,
@@ -67,6 +69,8 @@ impl Default for SynthEngine {
             pitch_bend_semitones: 0.0,
             scope_data: Arc::new(parking_lot::Mutex::new(ScopeBuffer::default())),
             active_voice_count: Arc::new(AtomicUsize::new(0)),
+            held_midi_keys: 0,
+            last_host_playing: false,
             next_voice_age: 1,
             last_note: 60,
             sample_rate: 44100.0,
@@ -90,7 +94,44 @@ impl SynthEngine {
         }
         self.sequencer.reset();
         self.fx.reset();
+        self.held_midi_keys = 0;
+        self.last_host_playing = false;
         self.active_voice_count.store(0, Ordering::Relaxed);
+    }
+
+    /// Smart MIDI note on bridging: routes to 64-step sequencer transposition
+    /// or normal polyphonic synth voices cleanly without conflicts.
+    pub fn handle_midi_note_on(&mut self, note: u8, vel: f32) {
+        self.held_midi_keys += 1;
+        if self.sequencer.is_active_for_synth() {
+            // Transpose sequencer pattern to the pressed MIDI key
+            self.sequencer.set_root_note(note);
+            if self.sequencer.key_trigger {
+                self.sequencer.running = true;
+                self.sequencer.reset();
+            }
+        } else {
+            self.note_on(note, vel);
+        }
+    }
+
+    /// Smart MIDI note off bridging.
+    pub fn handle_midi_note_off(&mut self, note: u8) {
+        self.held_midi_keys = self.held_midi_keys.saturating_sub(1);
+        if self.sequencer.is_active_for_synth() {
+            if self.sequencer.key_trigger
+                && !self.sequencer.latch
+                && self.held_midi_keys == 0
+                && !self.sequencer.host_sync
+            {
+                self.sequencer.running = false;
+                for v in self.voices.iter_mut() {
+                    v.note_off();
+                }
+            }
+        } else {
+            self.note_off(note);
+        }
     }
 
     pub fn note_on(&mut self, note: u8, vel: f32) {
@@ -178,12 +219,31 @@ impl SynthEngine {
         host_playing: bool,
     ) {
         let num_samples = out_left.len().min(out_right.len());
+
+        // Detect host transport start/stop transitions
+        if host_playing && !self.last_host_playing && self.sequencer.host_sync {
+            self.sequencer.reset();
+        } else if !host_playing && self.last_host_playing && self.sequencer.host_sync {
+            // Host stopped: release active sequencer voice notes
+            for v in self.voices.iter_mut() {
+                if v.is_active() {
+                    v.note_off();
+                }
+            }
+        }
+        self.last_host_playing = host_playing;
+
         let mut active_count = 0;
 
         for i in 0..num_samples {
             // Check Step Sequencer trigger with full host DAW & standalone bridging
             match self.sequencer.process_sample(host_bpm, host_playing) {
-                SeqStepEvent::Trigger { note, velocity, slide, accent } => {
+                SeqStepEvent::Trigger {
+                    note,
+                    velocity,
+                    slide,
+                    accent,
+                } => {
                     if self.sequencer.mode == SeqMode::InternalSynth {
                         let final_vel = if accent { (velocity * 1.3).min(1.0) } else { velocity };
                         if slide {
@@ -238,18 +298,21 @@ impl SynthEngine {
 
             out_left[i] = final_l;
             out_right[i] = final_r;
-
-            // Write to oscilloscope buffer periodically
-            if i % 4 == 0 {
-                if let Some(mut scope) = self.scope_data.try_lock() {
-                    let idx = scope.write_idx;
-                    scope.buffer[idx] = (final_l + final_r) * 0.5;
-                    scope.write_idx = (idx + 1) % SCOPE_BUFFER_SIZE;
-                }
-            }
         }
 
         self.active_voice_count.store(active_count, Ordering::Relaxed);
+
+        // Push to oscilloscope buffer ONCE per block without locking inside sample loop
+        if let Some(mut scope) = self.scope_data.try_lock() {
+            let step = (num_samples / 64).max(1);
+            let mut s = 0;
+            while s < num_samples {
+                let idx = scope.write_idx;
+                scope.buffer[idx] = (out_left[s] + out_right[s]) * 0.5;
+                scope.write_idx = (idx + 1) % SCOPE_BUFFER_SIZE;
+                s += step;
+            }
+        }
     }
 }
 
