@@ -1,4 +1,4 @@
-# ⚡ ReplicatWave
+# ⚡ ReplicantWave
 
 <div align="center">
 
@@ -9,7 +9,7 @@
 
 <br/><br/>
 
-<img src="assets/replicatwave_gui.png" alt="ReplicatWave Cyberpunk Wavetable Synthesizer" width="920" />
+<img src="assets/replicantwave_gui.png" alt="ReplicantWave Cyberpunk Wavetable Synthesizer" width="920" />
 
 <br/><br/>
 
@@ -26,7 +26,7 @@
 
 ## ☕ Support the Project
 
-If you love **ReplicatWave** and want to support ongoing development, maintenance, and new features:
+If you love **ReplicantWave** and want to support ongoing development, maintenance, and new features:
 
 👉 **[Support / Buy me a coffee on PayPal (paypal.me/DanimanX)](https://paypal.me/DanimanX?locale.x=en_US&country.x=CL)**
 
@@ -36,7 +36,7 @@ There is also a direct **☕ DONATE** button in the top navigation bar of the pl
 
 ## 🌌 Overview
 
-**ReplicatWave** is a next-generation Rust-powered clone and reimagining of the Wavetable architecture, infused with a **Cyberpunk 2077 / Neon Noir** aesthetic and engineered for ultra-low CPU utilization.
+**ReplicantWave** is a next-generation Rust-powered clone and reimagining of the Wavetable architecture, infused with a **Cyberpunk 2077 / Neon Noir** aesthetic and engineered for ultra-low CPU utilization.
 
 Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer with a sliding navigation drawer** (inspired by *Replicant303*), full **Cytomic ZDF multimode filtering**, a multi-algorithm **Cyber Distortion engine**, and **16 factory presets** tailored for dark electronic music.
 
@@ -158,17 +158,17 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer
 
 ### Build VST3 & CLAP
 ```bash
-cargo xtask bundle replicatwave --release
+cargo xtask bundle replicantwave --release
 ```
 The bundles will be generated in `target/bundled/`:
-- `target/bundled/replicatwave.clap`
-- `target/bundled/replicatwave.vst3`
+- `target/bundled/replicantwave.clap`
+- `target/bundled/replicantwave.vst3`
 
 ### Build Standalone Executable
 ```bash
-cargo build --release --bin replicatwave-standalone
+cargo build --release --bin replicantwave-standalone
 ```
-Binary located at: `target/release/replicatwave-standalone`
+Binary located at: `target/release/replicantwave-standalone`
 
 ### Build macOS AudioUnit (AU)
 On macOS (or with `clap-wrapper`):

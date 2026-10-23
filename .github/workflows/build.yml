@@ -17,14 +17,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact-name: replicatwave-linux
-            bundle-path: target/bundled/
+            artifact-name: replicantwave-linux
+            platform: Linux
           - os: macos-latest
-            artifact-name: replicatwave-macos
-            bundle-path: target/bundled/
+            artifact-name: replicantwave-macos
+            platform: macOS
           - os: windows-latest
-            artifact-name: replicatwave-windows
-            bundle-path: target/bundled/
+            artifact-name: replicantwave-windows
+            platform: Windows
 
     runs-on: ${{ matrix.os }}
 
@@ -43,38 +43,68 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libjack-jackd2-dev zip
 
-      - name: Build Plugins & Bundles
-        run: cargo xtask bundle replicatwave --release
+      - name: Build Plugins & Bundles (VST3 & CLAP)
+        run: cargo xtask bundle replicantwave --release
 
-      - name: Build Standalone
-        run: cargo build --release --bin replicatwave-standalone
+      - name: Build Standalone Executable
+        run: cargo build --release --bin replicantwave-standalone
 
       - name: Package macOS AudioUnit (AU)
         if: matrix.os == 'macos-latest'
         run: |
           bash tools/build_au.sh || true
 
-      - name: Package Artifacts
+      - name: Package Multi-Format Release Artifacts (VST3, CLAP, AU, Standalone)
         shell: bash
         run: |
-          mkdir -p dist
-          cp -r target/bundled/* dist/ 2>/dev/null || true
+          mkdir -p dist_release
+          VERSION="v1.0.1"
+
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp target/release/replicatwave-standalone.exe dist/ 2>/dev/null || true
-            cd dist && 7z a ../${{ matrix.artifact-name }}.zip * && cd ..
+            # Windows VST3
+            cd target/bundled && 7z a ../../dist_release/ReplicantWave-${VERSION}-Windows-VST3.zip replicantwave.vst3 && cd ../..
+            # Windows CLAP
+            cd target/bundled && 7z a ../../dist_release/ReplicantWave-${VERSION}-Windows-CLAP.zip replicantwave.clap && cd ../..
+            # Windows Standalone
+            cd target/release && 7z a ../../dist_release/ReplicantWave-${VERSION}-Windows-Standalone.zip replicantwave-standalone.exe && cd ../..
+            # Windows All
+            cd target/bundled && 7z a ../../dist_release/ReplicantWave-${VERSION}-Windows-All.zip * && cd ../..
+            cd target/release && 7z a ../../dist_release/ReplicantWave-${VERSION}-Windows-All.zip replicantwave-standalone.exe && cd ../..
+
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            cp target/release/replicatwave-standalone dist/ 2>/dev/null || true
-            cd dist && zip -r -y ../${{ matrix.artifact-name }}.zip * && cd ..
+            # macOS VST3
+            cd target/bundled && zip -r -y ../../dist_release/ReplicantWave-${VERSION}-macOS-VST3.zip replicantwave.vst3 && cd ../..
+            # macOS CLAP
+            cd target/bundled && zip -r -y ../../dist_release/ReplicantWave-${VERSION}-macOS-CLAP.zip replicantwave.clap && cd ../..
+            # macOS AudioUnit (AU)
+            if [ -d target/bundled/ReplicantWave.component ]; then
+              cd target/bundled && zip -r -y ../../dist_release/ReplicantWave-${VERSION}-macOS-AU.zip ReplicantWave.component && cd ../..
+            fi
+            # macOS Standalone
+            cd target/release && zip -r -y ../../dist_release/ReplicantWave-${VERSION}-macOS-Standalone.zip replicantwave-standalone && cd ../..
+            # macOS All
+            cd target/bundled && zip -r -y ../../dist_release/ReplicantWave-${VERSION}-macOS-All.zip * && cd ../..
+            cd target/release && zip -u ../../dist_release/ReplicantWave-${VERSION}-macOS-All.zip replicantwave-standalone && cd ../..
+
           else
-            cp target/release/replicatwave-standalone dist/ 2>/dev/null || true
-            cd dist && zip -r ../${{ matrix.artifact-name }}.zip * && cd ..
+            # Linux VST3
+            cd target/bundled && zip -r ../../dist_release/ReplicantWave-${VERSION}-Linux-VST3.zip replicantwave.vst3 && cd ../..
+            # Linux CLAP
+            cd target/bundled && zip -r ../../dist_release/ReplicantWave-${VERSION}-Linux-CLAP.zip replicantwave.clap && cd ../..
+            # Linux Standalone
+            cd target/release && tar -czvf ../../dist_release/ReplicantWave-${VERSION}-Linux-Standalone.tar.gz replicantwave-standalone && cd ../..
+            # Linux All
+            cd target/bundled && zip -r ../../dist_release/ReplicantWave-${VERSION}-Linux-All.zip replicantwave.* && cd ../..
+            cd target/release && zip -u ../../dist_release/ReplicantWave-${VERSION}-Linux-All.zip replicantwave-standalone && cd ../..
           fi
+
+          ls -lh dist_release/
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact-name }}
-          path: ${{ matrix.artifact-name }}.zip
+          path: dist_release/*
 
   release:
     needs: build
@@ -88,9 +118,14 @@ jobs:
         with:
           path: artifacts
 
+      - name: Display downloaded release assets
+        run: |
+          echo "=== Release Assets to Upload ==="
+          ls -la artifacts/*/*
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/*/*.zip
+            artifacts/*/*
           generate_release_notes: true

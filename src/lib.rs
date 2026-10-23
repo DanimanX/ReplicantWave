@@ -9,14 +9,14 @@ use nih_plug_egui::{create_egui_editor, EguiState};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-pub struct ReplicatWave {
-    params: Arc<ReplicatWaveParams>,
+pub struct ReplicantWave {
+    params: Arc<ReplicantWaveParams>,
     engine: Arc<Mutex<SynthEngine>>,
     sample_rate: f32,
 }
 
 #[derive(Params)]
-pub struct ReplicatWaveParams {
+pub struct ReplicantWaveParams {
     #[persist = "editor-state"]
     pub editor_state: Arc<EguiState>,
 
@@ -30,17 +30,17 @@ pub struct ReplicatWaveParams {
     pub resonance: FloatParam,
 }
 
-impl Default for ReplicatWave {
+impl Default for ReplicantWave {
     fn default() -> Self {
         Self {
-            params: Arc::new(ReplicatWaveParams::default()),
+            params: Arc::new(ReplicantWaveParams::default()),
             engine: Arc::new(Mutex::new(SynthEngine::default())),
             sample_rate: 44100.0,
         }
     }
 }
 
-impl Default for ReplicatWaveParams {
+impl Default for ReplicantWaveParams {
     fn default() -> Self {
         Self {
             editor_state: EguiState::from_size(1024, 700),
@@ -77,12 +77,12 @@ impl Default for ReplicatWaveParams {
     }
 }
 
-impl Plugin for ReplicatWave {
-    const NAME: &'static str = "ReplicatWave";
+impl Plugin for ReplicantWave {
+    const NAME: &'static str = "ReplicantWave";
     const VENDOR: &'static str = "DanimanX";
-    const URL: &'static str = "https://github.com/DanimanX/ReplicatWave";
+    const URL: &'static str = "https://github.com/DanimanX/ReplicantWave";
     const EMAIL: &'static str = "daniel.rojas@chileatiende.cl";
-    const VERSION: &'static str = "1.0.0";
+    const VERSION: &'static str = "1.0.1";
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
         AudioIOLayout {
@@ -185,8 +185,8 @@ impl Plugin for ReplicatWave {
     }
 }
 
-impl ClapPlugin for ReplicatWave {
-    const CLAP_ID: &'static str = "com.danimanx.replicatwave";
+impl ClapPlugin for ReplicantWave {
+    const CLAP_ID: &'static str = "com.danimanx.replicantwave";
     const CLAP_DESCRIPTION: Option<&'static str> =
         Some("Cyberpunk Wavetable Synthesizer with 64-Step Sequencer");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
@@ -198,8 +198,8 @@ impl ClapPlugin for ReplicatWave {
     ];
 }
 
-impl Vst3Plugin for ReplicatWave {
-    const VST3_CLASS_ID: [u8; 16] = *b"ReplicatWave1337";
+impl Vst3Plugin for ReplicantWave {
+    const VST3_CLASS_ID: [u8; 16] = *b"ReplicantWav1337";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
         Vst3SubCategory::Instrument,
         Vst3SubCategory::Synth,
@@ -207,5 +207,5 @@ impl Vst3Plugin for ReplicatWave {
     ];
 }
 
-nih_export_clap!(ReplicatWave);
-nih_export_vst3!(ReplicatWave);
+nih_export_clap!(ReplicantWave);
+nih_export_vst3!(ReplicantWave);

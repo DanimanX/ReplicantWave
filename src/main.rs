@@ -1,6 +1,6 @@
 use nih_plug::prelude::*;
-use replicatwave::ReplicatWave;
+use replicantwave::ReplicantWave;
 
 fn main() {
-    nih_export_standalone::<ReplicatWave>();
+    nih_export_standalone::<ReplicantWave>();
 }

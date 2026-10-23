@@ -1,4 +1,4 @@
-//! Cyberpunk Neon Theme and Styling for ReplicatWave.
+//! Cyberpunk Neon Theme and Styling for ReplicantWave.
 
 use nih_plug_egui::egui::{Color32, Stroke};
 

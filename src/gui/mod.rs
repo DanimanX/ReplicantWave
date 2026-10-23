@@ -56,7 +56,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
         ui.horizontal(|ui| {
             // Cyberpunk Logo
             ui.label(
-                RichText::new("⚡ REPLICATWAVE ⚡")
+                RichText::new("⚡ REPLICANTWAVE ⚡")
                     .color(CyberTheme::NEON_CYAN)
                     .strong()
                     .size(15.0),
@@ -176,7 +176,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                     // Wavetable Morph Preview
                     let cur_wt1 = engine.bank.get_table(engine.voices[0].osc1_table_idx);
                     let cur_pos1 = engine.voices[0].osc1.position;
-                    draw_wavetable_preview(ui, cur_wt1, cur_pos1, CyberTheme::NEON_CYAN, 290.0, 48.0);
+                    draw_wavetable_preview(ui, cur_wt1, cur_pos1, CyberTheme::NEON_CYAN, 296.0, 68.0);
 
                     // Osc 1 Sliders
                     ui.horizontal(|ui| {
@@ -261,7 +261,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
 
                     let cur_wt2 = engine.bank.get_table(engine.voices[0].osc2_table_idx);
                     let cur_pos2 = engine.voices[0].osc2.position;
-                    draw_wavetable_preview(ui, cur_wt2, cur_pos2, CyberTheme::NEON_PINK, 290.0, 48.0);
+                    draw_wavetable_preview(ui, cur_wt2, cur_pos2, CyberTheme::NEON_PINK, 296.0, 68.0);
 
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("POS:").color(CyberTheme::TEXT_MUTED).size(10.0));

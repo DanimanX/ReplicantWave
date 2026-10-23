@@ -1,11 +1,11 @@
 [package]
-name = "replicatwave"
-version = "1.0.0"
+name = "replicantwave"
+version = "1.0.1"
 edition = "2021"
 authors = ["Daniel Rojas <daniel.rojas@chileatiende.cl>"]
-description = "ReplicatWave - Cyberpunk Wavetable Synthesizer with 64-Step Sequencer (VST3, CLAP, AU, Standalone)"
+description = "ReplicantWave - Cyberpunk Wavetable Synthesizer with 64-Step Sequencer (VST3, CLAP, AU, Standalone)"
 license = "MIT"
-default-run = "replicatwave-standalone"
+default-run = "replicantwave-standalone"
 
 [workspace]
 members = [
@@ -17,7 +17,7 @@ members = [
 crate-type = ["cdylib", "lib"]
 
 [[bin]]
-name = "replicatwave-standalone"
+name = "replicantwave-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 
