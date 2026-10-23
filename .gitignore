@@ -1,0 +1,10 @@
+/target
+/dist
+**/*.rs.bk
+*.swp
+*.orig
+.DS_Store
+*.vst3
+*.clap
+*.component
+Cargo.lock

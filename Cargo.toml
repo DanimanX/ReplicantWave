@@ -1,0 +1,49 @@
+[package]
+name = "replicatwave"
+version = "1.0.0"
+edition = "2021"
+authors = ["Daniel Rojas <daniel.rojas@chileatiende.cl>"]
+description = "ReplicatWave - Cyberpunk Wavetable Synthesizer with 64-Step Sequencer (VST3, CLAP, AU, Standalone)"
+license = "MIT"
+default-run = "replicatwave-standalone"
+
+[workspace]
+members = [
+    ".",
+    "xtask",
+]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "replicatwave-standalone"
+path = "src/main.rs"
+required-features = ["standalone"]
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["standalone", "vst3"] }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+egui = "0.31"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rand = "0.8"
+rand_pcg = "0.3"
+atomic_float = "1.1"
+open = "5.3"
+hound = "3.5"
+parking_lot = "0.12"
+
+[features]
+default = ["standalone"]
+standalone = ["nih_plug/standalone"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = false
+strip = "symbols"
+
+[profile.dev]
+opt-level = 1
