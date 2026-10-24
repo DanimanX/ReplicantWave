@@ -47,6 +47,55 @@ fn test_sequencer_midi_transpose() {
 }
 
 #[test]
+fn test_manual_play_button_toggle() {
+    let mut engine = SynthEngine::default();
+    engine.set_sample_rate(44100.0);
+
+    // Initial state: sequencer stopped, host transport stopped (standalone or paused DAW)
+    let host_bpm = 0.0;
+    let host_playing = false;
+
+    // Simulate clicking PLAY button in GUI:
+    engine.sequencer.running = true;
+    if engine.sequencer.mode == SeqMode::Off {
+        engine.sequencer.mode = SeqMode::InternalSynth;
+    }
+    engine.sequencer.reset();
+
+    let mut out_l = [0.0f32; 512];
+    let mut out_r = [0.0f32; 512];
+
+    // Process blocks while manual PLAY is active and host transport is false
+    let mut produced_audio = false;
+    for _ in 0..50 {
+        engine.process_block(&mut out_l, &mut out_r, host_bpm, host_playing);
+        for &s in out_l.iter() {
+            if s.abs() > 0.0001 {
+                produced_audio = true;
+                break;
+            }
+        }
+    }
+    assert!(produced_audio, "Manual PLAY must produce sound even when host_playing is false!");
+    assert!(engine.sequencer.current_step > 0, "Sequencer step should advance!");
+
+    // Simulate clicking STOP button in GUI:
+    engine.sequencer.running = false;
+    for v in engine.voices.iter_mut() {
+        v.note_off();
+    }
+
+    // Process remaining release tails (~3 seconds of audio to let 300ms exponential tail decay completely)
+    for _ in 0..300 {
+        engine.process_block(&mut out_l, &mut out_r, host_bpm, host_playing);
+    }
+
+    // Active voice count should return to 0
+    let active_voices = engine.active_voice_count.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(active_voices, 0, "All voices must be silenced after STOP!");
+}
+
+#[test]
 fn test_dsp_performance_benchmark() {
     let mut engine = SynthEngine::default();
     engine.set_sample_rate(44100.0);
