@@ -17,7 +17,7 @@ use theme::CyberTheme;
 use wavetable_view::draw_wavetable_preview;
 
 use nih_plug_egui::egui::{
-    pos2, Button, Color32, ComboBox, RichText, Sense, Stroke, StrokeKind, Ui, Vec2,
+    pos2, Button, Color32, ComboBox, Rect, RichText, Sense, Stroke, StrokeKind, Ui, Vec2,
 };
 use parking_lot::Mutex;
 use std::sync::atomic::Ordering;
@@ -48,6 +48,10 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
     ui.style_mut().visuals.panel_fill = CyberTheme::BG_VOID;
     ui.style_mut().visuals.window_fill = CyberTheme::BG_VOID;
 
+    // Draw authentic cyberpunk chassis background textures (heatsinks, microchips, red stamps, telemetry)
+    let full_rect = ui.available_rect_before_wrap();
+    CyberTheme::draw_chassis_decorations(ui.painter(), full_rect);
+
     let mut engine_guard = state.engine.lock();
     let engine = &mut *engine_guard;
 
@@ -62,18 +66,18 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 RichText::new("⚡ REPLICANTWAVE ⚡")
                     .color(CyberTheme::NEON_CYAN)
                     .strong()
-                    .size(15.0),
+                    .size(16.0),
             );
             ui.label(
                 RichText::new("// CYBERPUNK SYNTH")
-                    .color(CyberTheme::TEXT_DIM)
-                    .size(10.0),
+                    .color(CyberTheme::TEXT_MUTED)
+                    .size(10.5),
             );
 
-            ui.add_space(4.0);
+            ui.add_space(8.0);
 
-            // Preset Selector
-            if ui.button(RichText::new("◀").color(CyberTheme::NEON_CYAN)).clicked() {
+            // Preset Selector with cyan borders
+            if ui.button(RichText::new("◀").color(CyberTheme::NEON_CYAN).strong()).clicked() {
                 if state.current_preset_idx > 0 {
                     state.current_preset_idx -= 1;
                 } else {
@@ -85,7 +89,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
             let cur_name = state.presets[state.current_preset_idx].name.clone();
             ComboBox::from_id_salt("preset_combo")
                 .selected_text(RichText::new(&cur_name).color(CyberTheme::NEON_AMBER).strong())
-                .width(170.0)
+                .width(185.0)
                 .show_ui(ui, |ui| {
                     for (i, p) in state.presets.iter().enumerate() {
                         let text = format!("[{}] {}", p.category, p.name);
@@ -96,22 +100,23 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                     }
                 });
 
-            if ui.button(RichText::new("▶").color(CyberTheme::NEON_CYAN)).clicked() {
+            if ui.button(RichText::new("▶").color(CyberTheme::NEON_CYAN).strong()).clicked() {
                 state.current_preset_idx = (state.current_preset_idx + 1) % state.presets.len();
                 state.presets[state.current_preset_idx].apply_to_engine(engine);
             }
 
-            ui.add_space(8.0);
+            ui.add_space(14.0);
 
             // Live Telemetry Readout
             let active_voices = engine.active_voice_count.load(Ordering::Relaxed);
             ui.label(
                 RichText::new(format!("VOICES: {:02}/16 | DSP: 64-BIT", active_voices))
                     .color(CyberTheme::NEON_LIME)
-                    .size(10.5),
+                    .strong()
+                    .size(11.0),
             );
 
-            ui.add_space(6.0);
+            ui.add_space(10.0);
 
             // Master 64-Step Pattern Sequencer Quick Toggle
             let seq_active = engine.sequencer.is_playback_running(true);
@@ -120,10 +125,10 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 RichText::new(seq_text)
                     .color(if seq_active { Color32::from_rgb(10, 11, 16) } else { CyberTheme::TEXT_PRIMARY })
                     .strong()
-                    .size(10.0),
+                    .size(10.5),
             )
             .fill(if seq_active { CyberTheme::NEON_LIME } else { CyberTheme::BG_RECESSED })
-            .stroke(Stroke::new(1.0_f32, if seq_active { CyberTheme::NEON_LIME } else { CyberTheme::BORDER_DARK }));
+            .stroke(Stroke::new(1.2_f32, if seq_active { CyberTheme::NEON_LIME } else { CyberTheme::BORDER_DARK }));
 
             if ui.add(seq_btn).clicked() {
                 if engine.sequencer.mode == SeqMode::Off {
@@ -135,12 +140,12 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 }
             }
 
-            ui.add_space(6.0);
+            ui.add_space(10.0);
 
             // Master Volume Analog Rotary Knob
             draw_rotary_knob(ui, &mut engine.master_gain, 0.0..=1.5, "MASTER", CyberTheme::NEON_AMBER);
 
-            ui.add_space(8.0);
+            ui.add_space(14.0);
 
             // =====================================================================
             // DONATION BUTTON (Required by user!)
@@ -149,7 +154,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 RichText::new("☕ DONATE / BUY ME A COFFEE")
                     .color(Color32::from_rgb(10, 11, 16))
                     .strong()
-                    .size(10.5),
+                    .size(11.0),
             )
             .fill(CyberTheme::NEON_AMBER)
             .stroke(Stroke::new(1.5_f32, Color32::WHITE));
@@ -158,11 +163,11 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                 let _ = open::that(DONATION_URL);
             }
 
-            // Top-right industrial telemetry stamp
+            // Top-right industrial telemetry block matching new_ui.jpeg
             ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new("EATA: 0.500006\nERROS: 0.00\nEXFTA: 01003100")
-                        .color(Color32::from_rgb(70, 80, 104))
+                    RichText::new("EATA:     0.50000006\nERRORS:         0.00\nEXTTA:      01003100\nHAGINZS:        9.56")
+                        .color(Color32::from_rgb(72, 85, 112))
                         .size(8.0)
                         .monospace(),
                 );
@@ -170,33 +175,38 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
         });
 
         ui.add_space(4.0);
-        ui.separator();
 
         // Coordinates for modular analog patch cables
         let mut cable_jack_1: Option<nih_plug_egui::egui::Pos2> = None;
         let mut cable_jack_2: Option<nih_plug_egui::egui::Pos2> = None;
+        let mut cable_jack_3: Option<nih_plug_egui::egui::Pos2> = None;
+        let mut cable_jack_4: Option<nih_plug_egui::egui::Pos2> = None;
+
         let mut cable_dest_1: Option<nih_plug_egui::egui::Pos2> = None;
         let mut cable_dest_2: Option<nih_plug_egui::egui::Pos2> = None;
+        let mut cable_dest_3: Option<nih_plug_egui::egui::Pos2> = None;
+        let mut cable_dest_4: Option<nih_plug_egui::egui::Pos2> = None;
 
         // =========================================================================
-        // 2. MAIN DSP SYNTH PANELS (3 Columns)
+        // 2. MAIN DSP SYNTH PANELS (3 Columns evenly filling width)
         // =========================================================================
+        let col_w = 394.0;
         ui.horizontal(|ui| {
             // ---------------------------------------------------------------------
             // COLUMN 1: OSCILLATOR 1 & OSCILLATOR 2 (Eurorack Panel)
             // ---------------------------------------------------------------------
             let osc_resp = ui.group(|ui| {
-                ui.set_width(320.0);
+                ui.set_width(col_w);
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚡ OSCILLATORS").color(CyberTheme::NEON_CYAN).strong());
+                        ui.label(RichText::new("⚡ OSCILLATORS").color(CyberTheme::NEON_CYAN).strong().size(12.0));
                         ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
                             ui.label(RichText::new("05M/ASEC//12AS05T").color(CyberTheme::TEXT_DIM).monospace().size(8.0));
                         });
                     });
 
                     // --- OSC 1 ---
-                    let osc1_resp = ui.group(|ui| {
+                    let _osc1_resp = ui.group(|ui| {
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut engine.voices[0].osc1.enabled, "");
                             ui.label(RichText::new("OSC 1:").color(CyberTheme::NEON_CYAN).strong());
@@ -206,6 +216,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                             let mut cur_table = engine.voices[0].osc1_table_idx;
                             ComboBox::from_id_salt("osc1_table_combo")
                                 .selected_text(table_names.get(cur_table).cloned().unwrap_or_default())
+                                .width(120.0)
                                 .show_ui(ui, |ui| {
                                     for (i, name) in table_names.iter().enumerate() {
                                         if ui.selectable_value(&mut cur_table, i, name).clicked() {
@@ -215,14 +226,18 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                                         }
                                     }
                                 });
+
+                            ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
+                                ui.label(RichText::new("C001/0002/ // 165057.KE").color(CyberTheme::TEXT_DIM).monospace().size(7.5));
+                            });
                         });
 
                         // 3D GPU Holographic Wavetable Preview
                         let cur_wt1 = engine.bank.get_table(engine.voices[0].osc1_table_idx);
                         let cur_pos1 = engine.voices[0].osc1.position;
-                        draw_wavetable_preview(ui, cur_wt1, cur_pos1, CyberTheme::NEON_CYAN, 296.0, 68.0);
+                        draw_wavetable_preview(ui, cur_wt1, cur_pos1, CyberTheme::NEON_CYAN, col_w - 24.0, 74.0);
 
-                        // Osc 1 Rotary Knobs (Row 1: POS, TUNE, UNISON, DETUNE)
+                        // Osc 1 Rotary Knobs (Row 1: POS, TUNE, UNISON, DETUNE + Jack Sockets)
                         ui.horizontal(|ui| {
                             if draw_rotary_knob(ui, &mut engine.voices[0].osc1.position, 0.0..=1.0, "POS", CyberTheme::NEON_CYAN).changed() {
                                 let val = engine.voices[0].osc1.position;
@@ -236,10 +251,17 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                                 let val = engine.voices[0].osc1.unison;
                                 for v in engine.voices.iter_mut() { v.osc1.unison = val; }
                             }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.detune, 0.0..=1.0, "DETUNE", CyberTheme::NEON_CYAN).changed() {
+                            let det_resp = draw_rotary_knob(ui, &mut engine.voices[0].osc1.detune, 0.0..=1.0, "DETUNE", CyberTheme::NEON_CYAN);
+                            if det_resp.changed() {
                                 let val = engine.voices[0].osc1.detune;
                                 for v in engine.voices.iter_mut() { v.osc1.detune = val; }
                             }
+
+                            // Modular Patch Sockets 1 & 2 right next to DETUNE
+                            let j1_pos = pos2(det_resp.rect.max.x + 12.0, det_resp.rect.min.y + 10.0);
+                            let j2_pos = pos2(det_resp.rect.max.x + 12.0, det_resp.rect.min.y + 26.0);
+                            cable_jack_1 = Some(j1_pos);
+                            cable_jack_2 = Some(j2_pos);
                         });
 
                         // Osc 1 Rotary Knobs (Row 2: LEVEL, SPREAD, FORMANT, BEND)
@@ -263,12 +285,10 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         });
                     });
 
-                    cable_jack_1 = Some(pos2(osc1_resp.response.rect.max.x - 14.0, osc1_resp.response.rect.center().y + 24.0));
-
                     ui.add_space(2.0);
 
                     // --- OSC 2 ---
-                    let osc2_resp = ui.group(|ui| {
+                    let _osc2_resp = ui.group(|ui| {
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut engine.voices[0].osc2.enabled, "");
                             ui.label(RichText::new("OSC 2:").color(CyberTheme::NEON_PINK).strong());
@@ -277,6 +297,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                             let mut cur_table = engine.voices[0].osc2_table_idx;
                             ComboBox::from_id_salt("osc2_table_combo")
                                 .selected_text(table_names.get(cur_table).cloned().unwrap_or_default())
+                                .width(120.0)
                                 .show_ui(ui, |ui| {
                                     for (i, name) in table_names.iter().enumerate() {
                                         if ui.selectable_value(&mut cur_table, i, name).clicked() {
@@ -286,11 +307,15 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                                         }
                                     }
                                 });
+
+                            ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
+                                ui.label(RichText::new("CQ916139 COG 26.918").color(CyberTheme::TEXT_DIM).monospace().size(7.5));
+                            });
                         });
 
                         let cur_wt2 = engine.bank.get_table(engine.voices[0].osc2_table_idx);
                         let cur_pos2 = engine.voices[0].osc2.position;
-                        draw_wavetable_preview(ui, cur_wt2, cur_pos2, CyberTheme::NEON_PINK, 296.0, 68.0);
+                        draw_wavetable_preview(ui, cur_wt2, cur_pos2, CyberTheme::NEON_PINK, col_w - 24.0, 74.0);
 
                         // Osc 2 Rotary Knobs (Row 1: POS, TUNE, UNISON, DETUNE)
                         ui.horizontal(|ui| {
@@ -312,7 +337,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                             }
                         });
 
-                        // Osc 2 Rotary Knobs (Row 2: LEVEL, SPREAD, FORMANT, BEND)
+                        // Osc 2 Rotary Knobs (Row 2: LEVEL, SPREAD, FORMANT, BEND + Jack Sockets)
                         ui.horizontal(|ui| {
                             if draw_rotary_knob(ui, &mut engine.voices[0].osc2.level_gain, 0.0..=1.5, "LEVEL", CyberTheme::NEON_PINK).changed() {
                                 let val = engine.voices[0].osc2.level_gain;
@@ -326,14 +351,19 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                                 let val = engine.voices[0].osc2.formant;
                                 for v in engine.voices.iter_mut() { v.osc2.formant = val; }
                             }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.bend, -1.0..=1.0, "BEND", CyberTheme::NEON_PINK).changed() {
+                            let bend_resp = draw_rotary_knob(ui, &mut engine.voices[0].osc2.bend, -1.0..=1.0, "BEND", CyberTheme::NEON_PINK);
+                            if bend_resp.changed() {
                                 let val = engine.voices[0].osc2.bend;
                                 for v in engine.voices.iter_mut() { v.osc2.bend = val; }
                             }
+
+                            // Modular Patch Sockets 3 & 4 right next to BEND
+                            let j3_pos = pos2(bend_resp.rect.max.x + 12.0, bend_resp.rect.min.y + 10.0);
+                            let j4_pos = pos2(bend_resp.rect.max.x + 12.0, bend_resp.rect.min.y + 26.0);
+                            cable_jack_3 = Some(j3_pos);
+                            cable_jack_4 = Some(j4_pos);
                         });
                     });
-
-                    cable_jack_2 = Some(pos2(osc2_resp.response.rect.max.x - 14.0, osc2_resp.response.rect.center().y + 24.0));
                 });
             });
 
@@ -343,11 +373,11 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
             // COLUMN 2: MULTIMODE FILTER, SUB/NOISE, AND LIVE OSCILLOSCOPE
             // ---------------------------------------------------------------------
             let col2_resp = ui.group(|ui| {
-                ui.set_width(330.0);
+                ui.set_width(col_w);
                 ui.vertical(|ui| {
                     // Live Oscilloscope Display
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚡ NEON OSCILLOSCOPE").color(CyberTheme::NEON_CYAN).strong());
+                        ui.label(RichText::new("⚡ NEON OSCILLOSCOPE").color(CyberTheme::NEON_CYAN).strong().size(12.0));
                         ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
                             ui.label(RichText::new("DEP VECTOR // 64-BIT").color(CyberTheme::TEXT_DIM).monospace().size(8.0));
                         });
@@ -357,12 +387,14 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         let scope = engine.scope_data.lock();
                         scope.buffer.to_vec()
                     };
-                    draw_oscilloscope(ui, &samples, 310.0, 70.0);
+                    draw_oscilloscope(ui, &samples, col_w - 24.0, 74.0);
 
                     ui.add_space(3.0);
 
-                    // Multimode Filter
+                    // Multimode Filter Sub-panel with Military Green / Teal Styling
                     let flt_resp = ui.group(|ui| {
+                        ui.style_mut().visuals.widgets.inactive.bg_fill = CyberTheme::BG_FILTER;
+
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut engine.voices[0].filter.enabled, "");
                             ui.label(RichText::new("MULTIMODE FILTER").color(CyberTheme::NEON_AMBER).strong());
@@ -379,7 +411,8 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                             };
 
                             ComboBox::from_id_salt("flt_type_combo")
-                                .selected_text(f_types[cur_type])
+                                .selected_text(RichText::new(f_types[cur_type]).color(CyberTheme::NEON_AMBER).strong())
+                                .width(90.0)
                                 .show_ui(ui, |ui| {
                                     for (i, &name) in f_types.iter().enumerate() {
                                         if ui.selectable_value(&mut cur_type, i, name).clicked() {
@@ -388,6 +421,10 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                                         }
                                     }
                                 });
+
+                            ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
+                                ui.label(RichText::new("DULT1SWAT BSSTA RE 1.CIRA").color(CyberTheme::TEXT_DIM).monospace().size(7.5));
+                            });
                         });
 
                         // Filter Analog Rotary Knobs (Row 1: CUTOFF, RESO, DRIVE, ENV MOD)
@@ -428,11 +465,14 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         });
                     });
 
-                    cable_dest_1 = Some(pos2(flt_resp.response.rect.min.x + 8.0, flt_resp.response.rect.center().y - 10.0));
+                    // Left-side Filter Jack Inputs
+                    cable_dest_1 = Some(pos2(flt_resp.response.rect.min.x + 4.0, flt_resp.response.rect.center().y - 12.0));
+                    cable_dest_2 = Some(pos2(flt_resp.response.rect.min.x + 4.0, flt_resp.response.rect.center().y + 4.0));
+                    cable_dest_3 = Some(pos2(flt_resp.response.rect.min.x + 4.0, flt_resp.response.rect.center().y + 20.0));
 
                     ui.add_space(3.0);
 
-                    // Sub Oscillator & Noise Generator
+                    // Sub Oscillator & Noise Generator Sub-panel
                     let sub_resp = ui.group(|ui| {
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut engine.voices[0].sub.enabled, "");
@@ -442,18 +482,19 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                                 for v in engine.voices.iter_mut() { v.sub.level_gain = val; }
                             }
 
-                            ui.add_space(14.0);
+                            ui.add_space(20.0);
 
                             ui.checkbox(&mut engine.voices[0].noise.enabled, "");
-                            ui.label(RichText::new("NOISE:").color(CyberTheme::TEXT_MUTED).strong().size(11.0));
-                            if draw_rotary_knob(ui, &mut engine.voices[0].noise.level_gain, 0.0..=1.0, "NOISE LVL", CyberTheme::TEXT_MUTED).changed() {
+                            ui.label(RichText::new("NOISE:").color(CyberTheme::NEON_CYAN).strong().size(11.0));
+                            if draw_rotary_knob(ui, &mut engine.voices[0].noise.level_gain, 0.0..=1.0, "NOISE LVL", CyberTheme::NEON_CYAN).changed() {
                                 let val = engine.voices[0].noise.level_gain;
                                 for v in engine.voices.iter_mut() { v.noise.level_gain = val; }
                             }
                         });
                     });
 
-                    cable_dest_2 = Some(pos2(sub_resp.response.rect.min.x + 8.0, sub_resp.response.rect.center().y));
+                    // Sub Jack Input
+                    cable_dest_4 = Some(pos2(sub_resp.response.rect.min.x + 4.0, sub_resp.response.rect.center().y));
                 });
             });
 
@@ -463,12 +504,12 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
             // COLUMN 3: ENVELOPES & CYBERPUNK FX CHAIN WITH REAL-TIME MONITORS
             // ---------------------------------------------------------------------
             let col3_resp = ui.group(|ui| {
-                ui.set_width(330.0);
+                ui.set_width(col_w);
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚡ MODULATION & FX").color(CyberTheme::NEON_PURPLE).strong());
+                        ui.label(RichText::new("⚡ MODULATION & FX").color(CyberTheme::NEON_PURPLE).strong().size(12.0));
                         ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
-                            ui.label(RichText::new("FX MATRIX // DUAL").color(CyberTheme::TEXT_DIM).monospace().size(8.0));
+                            ui.label(RichText::new("CRESCENDATION FORSING").color(CyberTheme::TEXT_DIM).monospace().size(8.0));
                         });
                     });
 
@@ -502,7 +543,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         // Distortion
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut engine.fx.distortion.enabled, "");
-                            ui.label(RichText::new("DIST:").size(10.0).color(CyberTheme::NEON_PINK));
+                            ui.label(RichText::new("DIST:").size(10.5).color(CyberTheme::NEON_PINK).strong());
                             let dist_modes = ["OVERDRIVE", "CRUSHER", "FIRE", "GRIND"];
                             let mut cur_dm = match engine.fx.distortion.mode {
                                 DistortionMode::SoftOverdrive => 0,
@@ -512,7 +553,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                             };
                             ComboBox::from_id_salt("dist_mode_combo")
                                 .selected_text(dist_modes[cur_dm])
-                                .width(78.0)
+                                .width(88.0)
                                 .show_ui(ui, |ui| {
                                     for (i, &name) in dist_modes.iter().enumerate() {
                                         if ui.selectable_value(&mut cur_dm, i, name).clicked() {
@@ -520,6 +561,13 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                                         }
                                     }
                                 });
+
+                            // Horizontal cyan drive meter line matching new_ui.jpeg
+                            let (bar_rect, _) = ui.allocate_exact_size(Vec2::new(42.0, 6.0), Sense::hover());
+                            ui.painter().rect_filled(bar_rect, 1.0, Color32::from_rgb(10, 16, 24));
+                            let fill_w = bar_rect.width() * engine.fx.distortion.amount.clamp(0.0, 1.0);
+                            ui.painter().rect_filled(Rect::from_min_size(bar_rect.min, Vec2::new(fill_w, bar_rect.height())), 1.0, CyberTheme::NEON_CYAN);
+
                             draw_rotary_knob(ui, &mut engine.fx.distortion.amount, 0.0..=1.0, "DRIVE", CyberTheme::NEON_PINK);
                             draw_mini_fx_monitor(ui, 0, CyberTheme::NEON_PINK, engine.fx.distortion.enabled);
                         });
@@ -527,7 +575,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         // Chorus
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut engine.fx.chorus.enabled, "");
-                            ui.label(RichText::new("CHORUS:").size(10.0).color(CyberTheme::NEON_CYAN));
+                            ui.label(RichText::new("CHORUS:").size(10.5).color(CyberTheme::NEON_CYAN).strong());
                             draw_rotary_knob(ui, &mut engine.fx.chorus.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_CYAN);
                             draw_rotary_knob(ui, &mut engine.fx.chorus.rate_hz, 0.1..=8.0, "RATE", CyberTheme::NEON_CYAN);
                             draw_mini_fx_monitor(ui, 1, CyberTheme::NEON_CYAN, engine.fx.chorus.enabled);
@@ -536,7 +584,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         // Delay
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut engine.fx.delay.enabled, "");
-                            ui.label(RichText::new("P-P DELAY:").size(10.0).color(CyberTheme::NEON_AMBER));
+                            ui.label(RichText::new("P-P DELAY:").size(10.5).color(CyberTheme::NEON_AMBER).strong());
                             draw_rotary_knob(ui, &mut engine.fx.delay.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_AMBER);
                             draw_rotary_knob(ui, &mut engine.fx.delay.feedback, 0.0..=0.9, "FDBK", CyberTheme::NEON_AMBER);
                             draw_mini_fx_monitor(ui, 2, CyberTheme::NEON_AMBER, engine.fx.delay.enabled);
@@ -545,7 +593,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         // Reverb
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut engine.fx.reverb.enabled, "");
-                            ui.label(RichText::new("REVERB:").size(10.0).color(CyberTheme::NEON_PURPLE));
+                            ui.label(RichText::new("REVERB:").size(10.5).color(CyberTheme::NEON_PURPLE).strong());
                             draw_rotary_knob(ui, &mut engine.fx.reverb.room_size, 0.0..=1.0, "ROOM", CyberTheme::NEON_PURPLE);
                             draw_rotary_knob(ui, &mut engine.fx.reverb.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_PURPLE);
                             draw_mini_fx_monitor(ui, 3, CyberTheme::NEON_PURPLE, engine.fx.reverb.enabled);
@@ -554,7 +602,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
                         // Trance Gate
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut engine.fx.gate.enabled, "");
-                            ui.label(RichText::new("TRANCE GATE (CHOPPER)").size(10.0).color(CyberTheme::NEON_LIME));
+                            ui.label(RichText::new("TRANCE GATE (CHOPPER)").size(10.5).color(CyberTheme::NEON_LIME).strong());
                         });
                     });
                 });
@@ -564,7 +612,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
         });
 
         // =========================================================================
-        // 2B. MODULAR ANALOG PATCH CABLES OVERLAY
+        // 2B. MODULAR ANALOG PATCH CABLES OVERLAY (4 High-Realism Physical Cables)
         // =========================================================================
         let painter = ui.painter();
         if let (Some(j1), Some(d1)) = (cable_jack_1, cable_dest_1) {
@@ -574,12 +622,24 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
         }
 
         if let (Some(j2), Some(d2)) = (cable_jack_2, cable_dest_2) {
-            CyberTheme::draw_patch_socket(painter, j2, CyberTheme::NEON_PINK);
-            CyberTheme::draw_patch_socket(painter, d2, CyberTheme::NEON_PINK);
-            CyberTheme::draw_patch_cable(painter, j2, d2, CyberTheme::NEON_PINK);
+            CyberTheme::draw_patch_socket(painter, j2, CyberTheme::NEON_CYAN);
+            CyberTheme::draw_patch_socket(painter, d2, CyberTheme::NEON_CYAN);
+            CyberTheme::draw_patch_cable(painter, j2, d2, CyberTheme::NEON_CYAN);
         }
 
-        ui.add_space(4.0);
+        if let (Some(j3), Some(d3)) = (cable_jack_3, cable_dest_3) {
+            CyberTheme::draw_patch_socket(painter, j3, CyberTheme::NEON_PINK);
+            CyberTheme::draw_patch_socket(painter, d3, CyberTheme::NEON_PINK);
+            CyberTheme::draw_patch_cable(painter, j3, d3, CyberTheme::NEON_PINK);
+        }
+
+        if let (Some(j4), Some(d4)) = (cable_jack_4, cable_dest_4) {
+            CyberTheme::draw_patch_socket(painter, j4, CyberTheme::NEON_PINK);
+            CyberTheme::draw_patch_socket(painter, d4, CyberTheme::NEON_PINK);
+            CyberTheme::draw_patch_cable(painter, j4, d4, CyberTheme::NEON_PINK);
+        }
+
+        ui.add_space(3.0);
 
         // =========================================================================
         // 3. STEP SEQUENCER DRAWER (64 STEPS WITH ROTARY DIAL & MINI OVERVIEW RADAR)

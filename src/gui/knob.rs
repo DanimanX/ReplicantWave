@@ -66,7 +66,7 @@ pub fn draw_rotary_knob_i8(
     let mut f_val = *value as f32;
 
     let custom_val_str = format!("{:+}", *value);
-    let response = draw_knob_internal(ui, &mut f_val, min_f..=max_f, label, color, false, 11.0, Some(&custom_val_str));
+    let response = draw_knob_internal(ui, &mut f_val, min_f..=max_f, label, color, false, 13.0, Some(&custom_val_str));
     *value = f_val.round() as i8;
     response
 }
@@ -84,7 +84,7 @@ pub fn draw_rotary_knob_u8(
     let mut f_val = *value as f32;
 
     let custom_val_str = format!("{}", *value);
-    let response = draw_knob_internal(ui, &mut f_val, min_f..=max_f, label, color, false, 11.0, Some(&custom_val_str));
+    let response = draw_knob_internal(ui, &mut f_val, min_f..=max_f, label, color, false, 13.0, Some(&custom_val_str));
     *value = f_val.round() as u8;
     response
 }
