@@ -11,7 +11,11 @@
 
 <img src="assets/replicantwave_gui.png" alt="ReplicantWave Cyberpunk Wavetable Synthesizer" width="920" />
 
-<br/><br/>
+<br/>
+
+**▶ [Watch the 66-second Cyberpunk Darkwave promo video](assets/replicantwave_promo.mp4)** — 1080p30, every sound rendered by the engine itself.
+
+<br/>
 
 [![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?logo=paypal&logoColor=white&style=for-the-badge)](https://paypal.me/DanimanX?locale.x=en_US&country.x=CL)
 
@@ -169,6 +173,16 @@ Compiled bundles will be generated in `target/bundled/`:
 - `target/bundled/replicantwave.vst3`
 - `target/bundled/replicantwave.clap`
 - `target/release/replicantwave-standalone`
+
+### Regenerate the Promo Video
+```bash
+# 1. Render the soundtrack with the real DSP engine
+cargo run --release --example promo_track
+
+# 2. Composite the 1920x1080 / 30 fps master (needs ffmpeg, Pillow, numpy)
+python3 tools/make_promo.py
+```
+The result is written to `assets/replicantwave_promo.mp4`.
 
 ---
 
