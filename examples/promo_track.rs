@@ -1,16 +1,21 @@
 //! Offline promo-track renderer for ReplicantWave.
 //!
-//! Generates a crushing, authentic Midtempo Cyberpunk cue (105 BPM in F minor)
-//! matching the heavy, industrial sound of Zeneth / Reinelex Music mixes:
-//! - "Zeneth Cyber Midtempo" (Heavy neuro-bass growls with wavefolded harmonics)
+//! Generates a crushing, authentic Midtempo Cyberpunk cue (102 BPM in B minor)
+//! inspired directly by "Extra Terra - Cyberpunk" (Convergence 2045):
+//! - "Extra Terra Cyber Bass" (Signature midtempo growls with wavefolding bite)
+//! - "Extra Terra Cyber Lead" (Futuristic razor-sharp saw lead with delay)
+//! - "Zeneth Cyber Midtempo" (Neuro-bass growls with aggressive harmonics)
+//! - "Night City Midtempo Chug" (Stomping 16th-note electro-bass chug)
 //! - "Reinelex Neuro Reese" (Wide, detuned 8-voice stereo Reese bass)
 //! - "Cyberpunk 2077 Combat Lead" (Piercing hard-synced screamer lead)
-//! - "Night City Midtempo Chug" (Stomping 16th-note electro-bass chug)
 //! - "Darksynth Power Stab" (Punchy analog brass stabs)
+//! - "Netrunner Arp" (Rapid cyber arpeggiator)
 //! - "Ghost Protocol Choir" (Ethereal cyberpunk vocaloid choir)
 //! - "Corpo Tower Dystopia" (Lush, dark cinematic pad)
 //! - "Blackwall Drone" (Dystopian sub drone)
 //!
+//! Features the signature Extra Terra "Cyberdrums" kick: ultra-tight transient click,
+//! punchy mid knock, and saturated, clipped 49 Hz sub thump.
 //! Mastered to 48 kHz stereo 16-bit WAV for video compositing.
 
 use replicantwave::audio::SynthEngine;
@@ -20,12 +25,12 @@ use std::f32::consts::TAU;
 use std::path::PathBuf;
 
 pub const SR: f32 = 48_000.0;
-pub const BPM: f32 = 105.0; // Classic Midtempo Cyberpunk tempo (Zeneth / Reinelex)
-pub const BEAT: f32 = 60.0 / BPM; // ~0.5714 s
-pub const BAR: f32 = BEAT * 4.0;  // ~2.2857 s
-pub const BARS: usize = 28;       // 64.0 s
+pub const BPM: f32 = 102.0; // Extra Terra - Cyberpunk tempo (102 BPM)
+pub const BEAT: f32 = 60.0 / BPM; // ~0.5882 s
+pub const BAR: f32 = BEAT * 4.0;  // ~2.3529 s
+pub const BARS: usize = 28;       // ~65.88 s
 pub const TAIL: f32 = 2.0;
-pub const LEN: f32 = BAR * BARS as f32 + TAIL; // 66.0 s
+pub const LEN: f32 = BAR * BARS as f32 + TAIL; // ~67.88 s
 
 #[derive(Clone, Copy, Debug)]
 pub struct Note {
@@ -102,7 +107,7 @@ pub fn render_stem(preset: &SynthPreset, notes: &[Note]) -> Vec<f32> {
 }
 
 // ---------------------------------------------------------------------------
-// Crushing Midtempo Cyberpunk Drums & Impacts (105 BPM)
+// Signature Extra Terra "Cyberdrums" Kick & Industrial Percussion (102 BPM)
 // ---------------------------------------------------------------------------
 
 pub struct Rng(u32);
@@ -118,34 +123,46 @@ impl Rng {
     }
 }
 
-/// Massive Midtempo Kick: 140 Hz transient click + saturated 45 Hz sub thump.
-pub fn add_midtempo_kick(buf: &mut [f32], t0: f32, gain: f32) {
+/// Extra Terra "Cyberdrums" Kick:
+/// - Razor-sharp transient click (2400 Hz -> 400 Hz in 3-4ms)
+/// - Punchy mid knock (320 Hz -> 115 Hz)
+/// - Saturated 49 Hz sub body (tuned to B0 / 49 Hz) with solid weight
+/// - Heavy soft-clipping / tanh wavefolder saturation for maximum punch
+pub fn add_extra_terra_kick(buf: &mut [f32], t0: f32, gain: f32) {
     let start = (t0 * SR) as usize;
-    let len = (0.42 * SR) as usize;
+    let len = (0.38 * SR) as usize;
     for i in 0..len {
         let idx = start + i;
         if idx * 2 + 1 >= buf.len() {
             break;
         }
         let t = i as f32 / SR;
-        // Pitch envelope: 140 Hz dropping to 45 Hz with strong sub sustain
-        let f = 45.0 + 95.0 * (-t * 36.0).exp();
-        let env = (-t * 7.5).exp();
-        let body = (TAU * f * t).sin() * env;
-        // Punchy click transient
-        let click = (-t * 600.0).exp() * (TAU * 900.0 * t).sin() * 0.55;
-        let raw = (body * 1.15 + click) * gain;
-        // Heavy analog tanh saturation
-        let s = (raw * 1.35).tanh();
+
+        // 1. High transient click (acoustic/electronic snap)
+        let click_f = 2400.0 * (-t * 450.0).exp() + 400.0;
+        let click = (TAU * click_f * t).sin() * (-t * 360.0).exp() * 0.90;
+
+        // 2. Punchy mid knock (mid knock around 180-80 Hz)
+        let knock_f = 60.0 + 260.0 * (-t * 65.0).exp();
+        let knock = (TAU * knock_f * t).sin() * (-t * 24.0).exp() * 0.75;
+
+        // 3. Sub body tuned to B0 (~49 Hz) with heavy low end
+        let sub_f = 49.0 + 75.0 * (-t * 16.0).exp();
+        let sub_env = (-t * 8.0).exp();
+        let sub = (TAU * sub_f * t).sin() * sub_env;
+
+        let raw = (click * 1.1 + knock + sub * 1.35) * gain;
+        // Asymmetric waveshaping / soft clipping (Extra Terra "Cyberdisto" character)
+        let s = (raw * 1.45).tanh();
         buf[idx * 2] += s;
         buf[idx * 2 + 1] += s;
     }
 }
 
-/// Shattering Midtempo Snare / Clap: 210 Hz body + stereo white noise burst with reverb.
+/// Shattering Midtempo Snare / Clap: 200 Hz body + stereo white noise burst with reverb.
 pub fn add_midtempo_snare(buf: &mut [f32], t0: f32, gain: f32, rng: &mut Rng) {
     let start = (t0 * SR) as usize;
-    let len = (0.32 * SR) as usize;
+    let len = (0.34 * SR) as usize;
     let mut hp = 0.0f32;
     let mut prev = 0.0f32;
     for i in 0..len {
@@ -157,10 +174,10 @@ pub fn add_midtempo_snare(buf: &mut [f32], t0: f32, gain: f32, rng: &mut Rng) {
         let n = rng.next();
         hp = 0.86 * (hp + n - prev);
         prev = n;
-        let noise_env = (-t * 11.0).exp();
-        let tone = (TAU * 205.0 * t).sin() * (-t * 22.0).exp() * 0.70;
-        let raw = (hp * noise_env * 1.05 + tone) * gain;
-        let s = (raw * 1.25).tanh();
+        let noise_env = (-t * 11.5).exp();
+        let tone = (TAU * 196.0 * t).sin() * (-t * 22.0).exp() * 0.75;
+        let raw = (hp * noise_env * 1.1 + tone) * gain;
+        let s = (raw * 1.30).tanh();
         buf[idx * 2] += s * 0.95;
         buf[idx * 2 + 1] += s * 1.05;
     }
@@ -168,9 +185,9 @@ pub fn add_midtempo_snare(buf: &mut [f32], t0: f32, gain: f32, rng: &mut Rng) {
 
 /// Cyber metallic clap layer.
 pub fn add_midtempo_clap(buf: &mut [f32], t0: f32, gain: f32, rng: &mut Rng) {
-    for (k, offset) in [0.0f32, 0.011, 0.024].iter().enumerate() {
+    for (k, offset) in [0.0f32, 0.010, 0.022].iter().enumerate() {
         let start = ((t0 + offset) * SR) as usize;
-        let len = (0.20 * SR) as usize;
+        let len = (0.22 * SR) as usize;
         let mut hp = 0.0f32;
         let mut prev = 0.0f32;
         for i in 0..len {
@@ -183,7 +200,7 @@ pub fn add_midtempo_clap(buf: &mut [f32], t0: f32, gain: f32, rng: &mut Rng) {
             hp = 0.89 * (hp + n - prev);
             prev = n;
             let env = (-t * 20.0).exp() * (1.0 - k as f32 * 0.18);
-            let s = hp * env * gain * 0.7;
+            let s = hp * env * gain * 0.72;
             buf[idx * 2] += s * 1.08;
             buf[idx * 2 + 1] += s * 0.92;
         }
@@ -193,7 +210,7 @@ pub fn add_midtempo_clap(buf: &mut [f32], t0: f32, gain: f32, rng: &mut Rng) {
 /// Sizzling closed / open hi-hat.
 pub fn add_midtempo_hat(buf: &mut [f32], t0: f32, gain: f32, open: bool, rng: &mut Rng) {
     let start = (t0 * SR) as usize;
-    let len = ((if open { 0.26 } else { 0.06 }) * SR) as usize;
+    let len = ((if open { 0.28 } else { 0.06 }) * SR) as usize;
     let mut prev = 0.0f32;
     let mut hp = 0.0f32;
     for i in 0..len {
@@ -206,7 +223,7 @@ pub fn add_midtempo_hat(buf: &mut [f32], t0: f32, gain: f32, open: bool, rng: &m
         hp = 0.93 * (hp + n - prev);
         prev = n;
         let env = (-t * if open { 13.0 } else { 60.0 }).exp();
-        let s = hp * env * gain * 0.75;
+        let s = hp * env * gain * 0.78;
         let pan = if i % 2 == 0 { 0.85 } else { 1.15 };
         buf[idx * 2] += s * pan;
         buf[idx * 2 + 1] += s * (2.0 - pan);
@@ -228,8 +245,8 @@ pub fn add_riser(buf: &mut [f32], t0: f32, dur: f32, gain: f32, rng: &mut Rng) {
         let coeff = 0.003 + 0.16 * u * u;
         lp += coeff * (rng.next() - lp);
         let env = u.powf(2.1);
-        let f_rise = 65.0 * (6.5f32).powf(u);
-        let tone = (TAU * f_rise * t).sin() * 0.18 * env;
+        let f_rise = 49.0 * (8.0f32).powf(u);
+        let tone = (TAU * f_rise * t).sin() * 0.20 * env;
         let s = (lp * 2.4 + tone) * env * gain;
         buf[idx * 2] += s * (0.85 + 0.15 * u);
         buf[idx * 2 + 1] += s * (1.15 - 0.15 * u);
@@ -239,7 +256,7 @@ pub fn add_riser(buf: &mut [f32], t0: f32, dur: f32, gain: f32, rng: &mut Rng) {
 /// Heavy cinematic braam / sub impact.
 pub fn add_braam_impact(buf: &mut [f32], t0: f32, gain: f32) {
     let start = (t0 * SR) as usize;
-    let len = (2.4 * SR) as usize;
+    let len = (2.5 * SR) as usize;
     let mut lp = 0.0f32;
     let mut rng = Rng::new(0x2077_BEEF);
     for i in 0..len {
@@ -248,7 +265,7 @@ pub fn add_braam_impact(buf: &mut [f32], t0: f32, gain: f32) {
             break;
         }
         let t = i as f32 / SR;
-        let sub_pitch = (TAU * (58.0 - 20.0 * (t / 1.6).min(1.0)) * t).sin();
+        let sub_pitch = (TAU * (62.0 - 22.0 * (t / 1.6).min(1.0)) * t).sin();
         let sub_boom = sub_pitch * (-t * 2.0).exp();
         lp += 0.07 * (rng.next() - lp);
         let crash = lp * (-t * 2.8).exp() * 1.6;
@@ -259,18 +276,18 @@ pub fn add_braam_impact(buf: &mut [f32], t0: f32, gain: f32) {
 }
 
 // ---------------------------------------------------------------------------
-// Midtempo Musical Composition in F Minor
-// Chords: Fm (F,Ab,C), Ab (Ab,C,Eb), Db (Db,F,Ab), C (C,E,G)
+// Midtempo Musical Composition in B Minor (Extra Terra Style)
+// Chords: Bm (B, D, F#), G (G, B, D), Em (E, G, B), F# (F#, A#, C#)
 // ---------------------------------------------------------------------------
 
-/// Root notes in MIDI: F1 (29), Ab1 (32), Db1 (25), C1 (24).
-const ROOTS: [u8; 4] = [29, 32, 25, 24];
+/// Root notes in MIDI: B1 (35), G1 (31), E1 (28), F#1 (30).
+const ROOTS: [u8; 4] = [35, 31, 28, 30];
 
 const TRIADS: [[i8; 3]; 4] = [
-    [0, 3, 7], // Fm
-    [0, 4, 7], // Ab
-    [0, 4, 7], // Db
-    [0, 4, 7], // C (Major V for harmonic tension)
+    [0, 3, 7], // Bm
+    [0, 4, 7], // G
+    [0, 3, 7], // Em
+    [0, 4, 7], // F# (Major Dominant for tension)
 ];
 
 pub fn chord(bar: usize) -> [u8; 3] {
@@ -284,26 +301,26 @@ pub fn chord(bar: usize) -> [u8; 3] {
     ]
 }
 
-/// Heavy Midtempo Neuro-Bass Growl Pattern ("Zeneth Cyber Midtempo").
-/// Syncopated midtempo groove: heavy downbeat chugs, pitch-bending growls, and call-and-response.
-pub fn midtempo_growl_line(bars: std::ops::Range<usize>) -> Vec<Note> {
+/// Extra Terra Midtempo Growl Pattern ("Extra Terra Cyber Bass").
+/// Heavily syncopated midtempo groove: downbeat punch, 16th-note stutters, octave leaps, and wavefolding.
+pub fn extra_terra_growl_line(bars: std::ops::Range<usize>) -> Vec<Note> {
     let mut out = Vec::new();
     for bar in bars {
-        let root = ROOTS[bar % 4] as i16 + 12; // F2 (41) etc.
-        // Midtempo 16th groove pattern (Zeneth style)
+        let root = ROOTS[bar % 4] as i16 + 12; // B2 (47) etc.
+        // Extra Terra signature midtempo rhythm
         let pattern: [(f32, i16, f32, f32); 12] = [
-            (0.00,  0, 1.00, 0.24), // Heavy chug
+            (0.00,  0, 1.00, 0.25), // Heavy downbeat stomp
             (0.75, 12, 0.95, 0.35), // Octave growl
-            (1.50,  3, 0.90, 0.22), // Minor third stab
-            (2.00,  0, 1.00, 0.24), // Midtempo downbeat punch
+            (1.25,  3, 0.85, 0.20), // Minor third stab
+            (1.75,  0, 0.95, 0.24), // Syncopated chug
+            (2.00,  0, 1.00, 0.25), // Beat 3 punch
             (2.50, 12, 0.95, 0.32), // High scream
             (3.00,  7, 0.90, 0.22), // Fifth pop
-            (3.50,  1, 0.95, 0.30), // Half-step slide growl
+            (3.50,  1, 0.95, 0.28), // Half-step slide tension
             (3.75, 12, 0.85, 0.18),
-            // Variations in bars
+            // Sub-pulses
             (0.25,  0, 0.80, 0.16),
             (1.00,  0, 0.85, 0.18),
-            (1.75,  0, 0.75, 0.16),
             (2.75,  0, 0.80, 0.16),
         ];
         for (beat, semi, vel, dur) in pattern {
@@ -318,34 +335,54 @@ pub fn midtempo_growl_line(bars: std::ops::Range<usize>) -> Vec<Note> {
     out
 }
 
-/// Searing Cyberpunk Combat Lead ("Cyberpunk 2077 Combat Lead").
-/// Screaming hard-sync saw melody tearing through the mix at 105 BPM.
-pub fn combat_lead(bars: std::ops::Range<usize>) -> Vec<Note> {
+/// Rolling 16th-note electro chug bassline ("Night City Midtempo Chug").
+pub fn midtempo_chug_line(bars: std::ops::Range<usize>) -> Vec<Note> {
     let mut out = Vec::new();
-    // Octave 5: F5 = 77
+    for bar in bars {
+        let root = ROOTS[bar % 4] as i16 + 12; // B2
+        for step in 0..16 {
+            let beat = step as f32 * 0.25;
+            let is_downbeat = step % 4 == 0;
+            let vel = if is_downbeat { 1.0 } else if step % 2 == 0 { 0.88 } else { 0.78 };
+            out.push(Note {
+                time: beat_time(bar, beat),
+                note: root.clamp(0, 127) as u8,
+                vel,
+                dur: 0.14,
+            });
+        }
+    }
+    out
+}
+
+/// Razor-sharp Cyber Lead Melody ("Extra Terra Cyber Lead").
+/// Heroic, dark cyberpunk theme inspired by Extra Terra - Cyberpunk at 102 BPM.
+pub fn extra_terra_lead_melody(bars: std::ops::Range<usize>) -> Vec<Note> {
+    let mut out = Vec::new();
+    // B minor motif in Octaves 4 and 5 (B4 = 71, D5 = 74, F#5 = 78, B5 = 83)
     let motif_a: [(f32, u8, f32, f32); 10] = [
-        (0.00, 77, 1.00, 0.65), // F5
-        (1.00, 80, 0.90, 0.45), // Ab5
-        (1.75, 79, 0.85, 0.35), // G5
-        (2.50, 77, 0.95, 0.65), // F5
-        (3.50, 72, 0.85, 0.40), // C5
-        (4.00, 73, 1.00, 0.65), // Db5
-        (5.00, 75, 0.90, 0.45), // Eb5
-        (5.75, 77, 0.95, 0.55), // F5
-        (6.75, 75, 0.85, 0.35), // Eb5
-        (7.25, 73, 0.90, 0.65), // Db5
+        (0.00, 83, 1.00, 0.65), // B5
+        (1.00, 86, 0.90, 0.45), // D6
+        (1.75, 85, 0.85, 0.35), // C#6
+        (2.50, 83, 0.95, 0.65), // B5
+        (3.50, 78, 0.85, 0.40), // F#5
+        (4.00, 79, 1.00, 0.65), // G5
+        (5.00, 81, 0.90, 0.45), // A5
+        (5.75, 83, 0.95, 0.55), // B5
+        (6.75, 81, 0.85, 0.35), // A5
+        (7.25, 79, 0.90, 0.65), // G5
     ];
     let motif_b: [(f32, u8, f32, f32); 10] = [
-        (0.00, 70, 1.00, 0.65), // Bb4
-        (1.00, 73, 0.90, 0.45), // Db5
-        (1.75, 77, 0.95, 0.55), // F5
-        (2.50, 75, 0.90, 0.45), // Eb5
-        (3.25, 73, 0.85, 0.55), // Db5
-        (4.00, 72, 1.00, 0.65), // C5
-        (5.00, 76, 0.90, 0.45), // E5
-        (5.75, 79, 1.00, 0.65), // G5
-        (6.75, 77, 0.90, 0.40), // F5
-        (7.25, 76, 0.95, 0.75), // E5
+        (0.00, 76, 1.00, 0.65), // E5
+        (1.00, 79, 0.90, 0.45), // G5
+        (1.75, 83, 0.95, 0.55), // B5
+        (2.50, 81, 0.90, 0.45), // A5
+        (3.25, 79, 0.85, 0.55), // G5
+        (4.00, 78, 1.00, 0.65), // F#5
+        (5.00, 82, 0.90, 0.45), // A#5
+        (5.75, 85, 1.00, 0.65), // C#6
+        (6.75, 83, 0.90, 0.40), // B5
+        (7.25, 82, 0.95, 0.75), // A#5
     ];
 
     for bar in bars.step_by(4) {
@@ -365,11 +402,36 @@ pub fn combat_lead(bars: std::ops::Range<usize>) -> Vec<Note> {
     out
 }
 
+/// Searing Cyberpunk Combat Lead ("Cyberpunk 2077 Combat Lead").
+/// Screaming hard-sync saw counter-melody.
+pub fn combat_lead_counter(bars: std::ops::Range<usize>) -> Vec<Note> {
+    let mut out = Vec::new();
+    let motif: [(f32, u8, f32, f32); 8] = [
+        (0.00, 71, 1.00, 0.50), // B4
+        (0.75, 74, 0.90, 0.35), // D5
+        (1.50, 78, 0.95, 0.50), // F#5
+        (2.25, 83, 1.00, 0.60), // B5
+        (3.00, 82, 0.90, 0.45), // A#5
+        (3.75, 78, 0.85, 0.35), // F#5
+        (4.50, 79, 0.95, 0.55), // G5
+        (5.25, 78, 0.90, 0.70), // F#5
+    ];
+    for bar in bars.step_by(2) {
+        for (beat, note, vel, dur) in motif {
+            let t = bar_time(bar) + beat * BEAT;
+            if t < LEN {
+                out.push(Note { time: t, note, vel, dur: dur * BEAT * 1.4 });
+            }
+        }
+    }
+    out
+}
+
 /// Wide, detuned Reese Bassline ("Reinelex Neuro Reese").
 pub fn reese_line(bars: std::ops::Range<usize>) -> Vec<Note> {
     let mut out = Vec::new();
     for bar in bars {
-        let root = ROOTS[bar % 4] as i16 + 12; // F2
+        let root = ROOTS[bar % 4] as i16 + 12; // B2
         out.push(Note {
             time: bar_time(bar),
             note: root.clamp(0, 127) as u8,
@@ -386,7 +448,7 @@ pub fn reese_line(bars: std::ops::Range<usize>) -> Vec<Note> {
     out
 }
 
-/// Alarm / Cyber Arp Sequence ("Netrunner Arp").
+/// Cyber Arp Sequence ("Netrunner Arp").
 pub fn alarm_arp(bars: std::ops::Range<usize>) -> Vec<Note> {
     let mut out = Vec::new();
     for bar in bars {
@@ -427,7 +489,7 @@ pub fn pad_chords(bars: std::ops::Range<usize>) -> Vec<Note> {
     out
 }
 
-/// Heavy Carpenter Brut / French Touch analog brass stabs ("Darksynth Power Stab").
+/// French Touch / Darksynth analog brass stabs ("Darksynth Power Stab").
 pub fn power_stabs(bars: std::ops::Range<usize>) -> Vec<Note> {
     let mut out = Vec::new();
     for bar in bars {
@@ -446,7 +508,7 @@ pub fn power_stabs(bars: std::ops::Range<usize>) -> Vec<Note> {
     out
 }
 
-/// Complete Midtempo Drum & Percussion Track (105 BPM).
+/// Complete Midtempo Drum & Percussion Track (102 BPM) with Extra Terra Kick.
 pub fn drums(rng: &mut Rng) -> Vec<f32> {
     let mut buf = vec![0.0f32; ((LEN * SR) as usize) * 2];
 
@@ -457,17 +519,21 @@ pub fn drums(rng: &mut Rng) -> Vec<f32> {
 
         if is_intro {
             if bar == 2 || bar == 3 {
-                add_midtempo_kick(&mut buf, bar_time(bar), 0.65);
+                // Intro preview kicks
+                add_extra_terra_kick(&mut buf, bar_time(bar), 0.75);
+                if bar == 3 {
+                    add_extra_terra_kick(&mut buf, beat_time(bar, 2.0), 0.75);
+                }
             }
             continue;
         }
 
         if is_breakdown {
-            // Half-time pulse
-            add_midtempo_kick(&mut buf, bar_time(bar), 0.85);
-            add_midtempo_kick(&mut buf, beat_time(bar, 2.0), 0.75);
+            // Half-time pulse with deep sub knock
+            add_extra_terra_kick(&mut buf, bar_time(bar), 0.88);
+            add_extra_terra_kick(&mut buf, beat_time(bar, 2.0), 0.80);
             if bar == 23 {
-                // Rapid snare build into climax
+                // Rapid snare build into climax drop
                 for k in 0..12 {
                     add_midtempo_snare(&mut buf, beat_time(bar, 1.0 + k as f32 * 0.25), 0.45 + k as f32 * 0.05, rng);
                 }
@@ -476,25 +542,25 @@ pub fn drums(rng: &mut Rng) -> Vec<f32> {
         }
 
         if is_drop {
-            // Midtempo 4-on-the-floor kick with heavy stomp
+            // Signature Extra Terra 4-on-the-floor stomping kick
             for beat in 0..4 {
-                let g = if beat == 0 { 1.10 } else { 0.95 };
-                add_midtempo_kick(&mut buf, beat_time(bar, beat as f32), g);
+                let g = if beat == 0 { 1.15 } else { 1.00 };
+                add_extra_terra_kick(&mut buf, beat_time(bar, beat as f32), g);
             }
-            // Syncopated ghost kick
-            add_midtempo_kick(&mut buf, beat_time(bar, 1.75), 0.75);
+            // Syncopated ghost kick for forward drive
+            add_extra_terra_kick(&mut buf, beat_time(bar, 1.75), 0.80);
 
-            // Shattering Snare + Clap on beats 1.0 and 3.0 (i.e. beats 2 and 4 of 4/4)
-            add_midtempo_snare(&mut buf, beat_time(bar, 1.0), 0.85, rng);
-            add_midtempo_snare(&mut buf, beat_time(bar, 3.0), 0.90, rng);
-            add_midtempo_clap(&mut buf, beat_time(bar, 1.0), 0.65, rng);
-            add_midtempo_clap(&mut buf, beat_time(bar, 3.0), 0.70, rng);
+            // Shattering Snare + Clap on beats 1.0 and 3.0 (i.e. beats 2 and 4 in 4/4)
+            add_midtempo_snare(&mut buf, beat_time(bar, 1.0), 0.88, rng);
+            add_midtempo_snare(&mut buf, beat_time(bar, 3.0), 0.92, rng);
+            add_midtempo_clap(&mut buf, beat_time(bar, 1.0), 0.68, rng);
+            add_midtempo_clap(&mut buf, beat_time(bar, 3.0), 0.72, rng);
 
-            // Driving 16th hats with sizzling open hats on offbeats
+            // Sizzling 16th hats with open hats on offbeats
             for step in 0..16 {
                 let t = beat_time(bar, step as f32 * 0.25);
                 let open = step % 4 == 2;
-                let g = if open { 0.32 } else if step % 2 == 0 { 0.22 } else { 0.14 };
+                let g = if open { 0.34 } else if step % 2 == 0 { 0.24 } else { 0.15 };
                 add_midtempo_hat(&mut buf, t, g, open, rng);
             }
 
@@ -508,16 +574,16 @@ pub fn drums(rng: &mut Rng) -> Vec<f32> {
     }
 
     // Risers and Impacts at structural milestones
-    add_riser(&mut buf, bar_time(2) + BEAT * 2.0, BAR * 1.5, 0.70, rng);
-    add_braam_impact(&mut buf, bar_time(4), 1.05); // DROP 1
+    add_riser(&mut buf, bar_time(2) + BEAT * 2.0, BAR * 1.5, 0.75, rng);
+    add_braam_impact(&mut buf, bar_time(4), 1.10); // DROP 1
 
-    add_riser(&mut buf, bar_time(10) + BEAT * 2.0, BAR * 1.5, 0.75, rng);
-    add_braam_impact(&mut buf, bar_time(12), 1.10); // DROP 2
+    add_riser(&mut buf, bar_time(10) + BEAT * 2.0, BAR * 1.5, 0.80, rng);
+    add_braam_impact(&mut buf, bar_time(12), 1.15); // DROP 2
 
-    add_riser(&mut buf, bar_time(22), BAR * 2.0, 0.90, rng); // BREAKDOWN RISER
-    add_braam_impact(&mut buf, bar_time(24), 1.20); // CLIMAX DROP
+    add_riser(&mut buf, bar_time(22), BAR * 2.0, 0.95, rng); // BREAKDOWN RISER
+    add_braam_impact(&mut buf, bar_time(24), 1.25); // CLIMAX DROP
 
-    add_braam_impact(&mut buf, bar_time(27), 0.85); // OUTRO
+    add_braam_impact(&mut buf, bar_time(27), 0.90); // OUTRO
 
     buf
 }
@@ -599,20 +665,31 @@ fn main() {
     let out_dir = PathBuf::from("target/promo");
     std::fs::create_dir_all(&out_dir).expect("create target/promo");
 
-    println!("Rendering stems with the ReplicantWave engine at {BPM} BPM (Midtempo Cyberpunk), {BARS} bars ({LEN:.1}s)...");
+    println!("Rendering stems with the ReplicantWave engine at {BPM} BPM (Extra Terra Cyberpunk Style), {BARS} bars ({LEN:.1}s)...");
 
-    let (zeneth_growl, combat, reese, chug, arp, pad, stabs, choir, drone) =
+    let (et_bass, et_lead, zeneth_growl, combat, reese, chug, arp, pad, stabs, choir, drone) =
         std::thread::scope(|s| {
+            let et_bass_h = s.spawn(|| {
+                let p = find_preset("Extra Terra Cyber Bass");
+                let mut notes = extra_terra_growl_line(4..20);
+                notes.extend(extra_terra_growl_line(24..27));
+                render_stem(&p, &notes)
+            });
+            let et_lead_h = s.spawn(|| {
+                let p = find_preset("Extra Terra Cyber Lead");
+                let mut notes = extra_terra_lead_melody(12..20);
+                notes.extend(extra_terra_lead_melody(24..27));
+                render_stem(&p, &notes)
+            });
             let zeneth_h = s.spawn(|| {
                 let p = find_preset("Zeneth Cyber Midtempo");
-                let mut notes = midtempo_growl_line(4..20);
-                notes.extend(midtempo_growl_line(24..27));
+                let mut notes = extra_terra_growl_line(4..20);
+                notes.extend(extra_terra_growl_line(24..27));
                 render_stem(&p, &notes)
             });
             let combat_h = s.spawn(|| {
                 let p = find_preset("Cyberpunk 2077 Combat Lead");
-                let mut notes = combat_lead(12..20);
-                notes.extend(combat_lead(24..27));
+                let notes = combat_lead_counter(24..27);
                 render_stem(&p, &notes)
             });
             let reese_h = s.spawn(|| {
@@ -623,7 +700,7 @@ fn main() {
             });
             let chug_h = s.spawn(|| {
                 let p = find_preset("Night City Midtempo Chug");
-                render_stem(&p, &midtempo_growl_line(4..27))
+                render_stem(&p, &midtempo_chug_line(4..27))
             });
             let arp_h = s.spawn(|| {
                 let p = find_preset("Netrunner Arp");
@@ -650,13 +727,15 @@ fn main() {
             let drone_h = s.spawn(|| {
                 let p = find_preset("Blackwall Drone");
                 let notes = vec![
-                    Note { time: 0.0, note: 29, vel: 0.85, dur: BAR * 4.0 },
-                    Note { time: bar_time(20), note: 29, vel: 0.75, dur: BAR * 4.0 },
-                    Note { time: bar_time(27), note: 29, vel: 0.80, dur: BAR * 1.5 },
+                    Note { time: 0.0, note: 35, vel: 0.85, dur: BAR * 4.0 },
+                    Note { time: bar_time(20), note: 35, vel: 0.75, dur: BAR * 4.0 },
+                    Note { time: bar_time(27), note: 35, vel: 0.80, dur: BAR * 1.5 },
                 ];
                 render_stem(&p, &notes)
             });
             (
+                et_bass_h.join().unwrap(),
+                et_lead_h.join().unwrap(),
                 zeneth_h.join().unwrap(),
                 combat_h.join().unwrap(),
                 reese_h.join().unwrap(),
@@ -670,7 +749,7 @@ fn main() {
         });
 
     println!("Rendering drums and sub-bass...");
-    let bass_notes = midtempo_growl_line(4..27);
+    let bass_notes = extra_terra_growl_line(4..27);
     let mut sub = sub_stem(&bass_notes);
     lowpass(&mut sub, 95.0);
 
@@ -679,13 +758,15 @@ fn main() {
 
     // Warm the top of the drums
     let mut drum_soft = drum.clone();
-    lowpass(&mut drum_soft, 9200.0);
+    lowpass(&mut drum_soft, 9400.0);
     for i in 0..drum.len() {
         drum[i] = drum[i] * 0.30 + drum_soft[i] * 0.70;
     }
 
     // Save diagnostic stems
     for (name, stem) in [
+        ("et_bass",      &et_bass),
+        ("et_lead",      &et_lead),
         ("zeneth_growl", &zeneth_growl),
         ("combat_lead",  &combat),
         ("reese",        &reese),
@@ -714,16 +795,18 @@ fn main() {
     println!("Stems written to {}", out_dir.display());
 
     // Mixdown & Gain Staging
-    let total = zeneth_growl.len();
+    let total = et_bass.len();
     let mut mix = vec![0.0f32; total];
-    let stems: [(&Vec<f32>, f32); 10] = [
-        (&zeneth_growl, 0.52),
-        (&combat,       0.46),
-        (&reese,        0.44),
+    let stems: [(&Vec<f32>, f32); 12] = [
+        (&et_bass,      0.54),
+        (&et_lead,      0.50),
+        (&zeneth_growl, 0.42),
+        (&combat,       0.38),
+        (&reese,        0.42),
         (&chug,         0.40),
         (&sub,          0.60),
         (&arp,          0.26),
-        (&pad,          0.60),
+        (&pad,          0.58),
         (&stabs,        0.36),
         (&choir,        0.30),
         (&drone,        0.38),
@@ -734,14 +817,14 @@ fn main() {
         }
     }
 
-    // Drums mix
+    // Drums mix (Heavy Extra Terra Kick & Percussion)
     for i in 0..total {
-        mix[i] += drum[i] * 1.00;
+        mix[i] += drum[i] * 1.05;
     }
 
     // Heavy sidechain pumping on the melodic bus for crushing midtempo groove
     let mut pumped = mix.clone();
-    sidechain(&mut pumped, 0.42, 0.14);
+    sidechain(&mut pumped, 0.44, 0.14);
     for i in 0..total {
         mix[i] = pumped[i] * 0.85 + mix[i] * 0.15;
     }
@@ -758,7 +841,7 @@ fn main() {
         } else if bar < 24.0 {
             0.64 + 0.12 * ((bar - 20.0) / 4.0)
         } else if bar < 27.0 {
-            1.08
+            1.10
         } else {
             0.88
         };

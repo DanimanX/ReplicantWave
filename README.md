@@ -42,7 +42,7 @@ There is also a direct **☕ DONATE** button in the top navigation bar of the pl
 
 **ReplicantWave** is a next-generation Rust-powered clone and reimagining of the Wavetable architecture, infused with a **Cyberpunk 2077 / Neon Noir** aesthetic and engineered for ultra-low CPU utilization.
 
-Featuring **2 multi-frame wavetable oscillators**, a **64-step neon step-matrix sequencer**, full **Cytomic ZDF multimode filtering**, a multi-algorithm **Cyber Distortion engine**, a live phosphor oscilloscope, a live ZDF filter response, and **42 factory presets** covering bass, pads, drones, leads, arps, sequences and FX for dark electronic music.
+Featuring **2 multi-frame wavetable oscillators**, a **64-step neon step-matrix sequencer**, full **Cytomic ZDF multimode filtering**, a multi-algorithm **Cyber Distortion engine**, a live phosphor oscilloscope, a live ZDF filter response, and **44 factory presets** covering bass, pads, drones, leads, arps, sequences and FX for dark electronic music.
 
 ---
 
@@ -131,15 +131,15 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step neon step-matrix 
 
 ## 🎚️ Factory Presets (Cyberpunk Soundbank)
 
-ReplicantWave ships with **38 factory patches** across seven banks. Every patch is rendered offline by `tests/preset_audio_test.rs` and checked for NaNs, silence, DC offset, runaway loudness and hard clipping.
+ReplicantWave ships with **44 factory patches** across seven banks (including the Night City Expansion and Midtempo Cyberpunk packs). Every patch is rendered offline by `tests/preset_audio_test.rs` and checked for NaNs, silence, DC offset, runaway loudness and hard clipping.
 
-**BASS** — Night City Bass · Subdermal 808 Rumble · Combat Zone Bass · Chrome Sub Assault · Neuro Reaper Bass · Acid Rain Bass
+**BASS** — Night City Bass · Subdermal 808 Rumble · Combat Zone Bass · Chrome Sub Assault · Neuro Reaper Bass · Acid Rain Bass · Zeneth Cyber Midtempo · Reinelex Neuro Reese · Night City Midtempo Chug · Extra Terra Cyber Bass
 
 **PAD** — Arasaka Matrix Pad · Synthetic Tears Pad · Neon Rain Pad · Corpo Cathedral · Ghost Protocol Choir · Cryo Sleep Pad · Ghost In The Wire Choir · Braindance Memory
 
 **DRONE** — Corpo Tower Dystopia · Blackwall Drone · Toxic Fog Drone · Singularity Hum · Arasaka Orbital Drone
 
-**LEAD** — Neon Blade 2049 · Darksynth Power Stab · Chrome Acid 303 · Overclocked Sync Screamer · Nightside Razor Lead · Laser Katana · Neon Samurai Lead · Void Screamer Lead
+**LEAD** — Neon Blade 2049 · Darksynth Power Stab · Chrome Acid 303 · Overclocked Sync Screamer · Nightside Razor Lead · Laser Katana · Neon Samurai Lead · Void Screamer Lead · Cyberpunk 2077 Combat Lead · Extra Terra Cyber Lead
 
 **ARP** — Netrunner Arp · Data Stream Arp · Kiroshi Rain Arp
 

@@ -37,9 +37,9 @@ OUT = os.path.join(ROOT, "assets/replicantwave_promo.mp4")
 
 W, H = 1920, 1080
 FPS = 30
-DUR = 66.0  # 28 bars @ 105 BPM = 64.0s + 2.0s tail
+DUR = 67.88  # 28 bars @ 102 BPM = 65.88s + 2.0s tail
 FRAMES = int(DUR * FPS)
-BPM = 105.0
+BPM = 102.0
 BEAT = 60.0 / BPM
 BAR = BEAT * 4.0
 
@@ -136,7 +136,7 @@ def get_wave_slice(stereo: np.ndarray, sr: int, f: int, n_samples: int = 400):
 
 
 def beat_energy(t: float) -> float:
-    # 105 BPM midtempo beat energy from bar 4 (approx 9.14s)
+    # 102 BPM midtempo beat energy from bar 4 (approx 9.41s)
     t0 = 4.0 * BAR
     if t < t0:
         return 0.0
@@ -686,17 +686,17 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
     frame_idx = int(t * FPS)
 
     # Grid floor on intro and outro
-    if t < 9.5 or t > 58.0:
-        alpha = int(140 * (1.0 - (t - 58.0) / 8.0) if t > 58.0 else min(1.0, t / 1.5))
+    if t < 9.5 or t > 60.0:
+        alpha = int(140 * (1.0 - (t - 60.0) / 7.8) if t > 60.0 else min(1.0, t / 1.5))
         grid = GRID.copy()
         grid.putalpha(grid.getchannel("A").point(lambda a: int(a * alpha / 255)))
         img.alpha_composite(grid)
 
     # -----------------------------------------------------------------------
-    # SCENE 1: BOOT SEQUENCE & HERO INTERFACE (0.0s - 9.1s | Bars 0 - 4)
+    # SCENE 1: BOOT SEQUENCE & HERO INTERFACE (0.0s - 9.41s | Bars 0 - 4)
     # Atmospheric Intro: Corpo Tower Dystopia Pad + Dystopian Drone
     # -----------------------------------------------------------------------
-    if t < 9.14:
+    if t < 9.41:
         section_name = "BOOT SEQUENCE // DUAL 3D OSCILLATORS ONLINE"
         if t < 3.2:
             title = "REPLICANTWAVE"
@@ -704,23 +704,23 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
             tw = d.textlength(title, font=F_TITLE)
             text_glow(img, (int(W / 2 - tw / 2), 340), title, F_TITLE, CYAN, glow=MAGENTA, radius=18)
             text_glow(img, (W // 2, 470), "NIGHT CITY AUDIO OS // CYBERPUNK SYNTHESIZER", F_MED, MAGENTA, radius=10, anchor="ma")
-            d.text((W // 2, 530), "INITIALIZING 3D DUAL WAVETABLE DSP · 42 FACTORY PATCHES · 84 HOST PARAMS", font=F_SMALL, fill=DIM + (255,), anchor="ma")
+            d.text((W // 2, 530), "INITIALIZING 3D DUAL WAVETABLE DSP · 44 FACTORY PATCHES · 84 HOST PARAMS", font=F_SMALL, fill=DIM + (255,), anchor="ma")
 
             log_box = (W // 2 - 290, 580, W // 2 + 290, 680)
             draw_cyber_card(img, log_box, CYAN, fill_alpha=200)
             ld = ImageDraw.Draw(img)
             ld.text((log_box[0] + 20, log_box[1] + 16), "> 3D HOLOGRAPHIC OSCILLATORS A & B... [ARMED]", font=F_TINY, fill=LIME + (255,))
             ld.text((log_box[0] + 20, log_box[1] + 38), "> 11-SLICE VOLUMETRIC ORBITAL DISPLAY... [SYNCED]", font=F_TINY, fill=CYAN + (255,))
-            ld.text((log_box[0] + 20, log_box[1] + 60), "> MIDTEMPO BASS ENGINE (105 BPM)... [READY]", font=F_TINY, fill=MAGENTA + (255,))
+            ld.text((log_box[0] + 20, log_box[1] + 60), "> EXTRA TERRA MIDTEMPO BASS ENGINE (102 BPM)... [READY]", font=F_TINY, fill=MAGENTA + (255,))
         else:
             # Full UI centered at (360, 96, 1200, 850) with ZERO crop
-            push = ease((t - 3.2) / 5.9)
+            push = ease((t - 3.2) / 6.2)
             zoom = lerp(1.03, 1.0, push)
             place_screenshot(img, "hero_gui", (360, 96, 1200, 850), zoom=zoom, focus=(0.5, 0.5), accent=CYAN)
 
             # Left margin badge
             draw_active_preset_badge(
-                img, "07/42", "CORPO DYSTOPIA", "PAD",
+                img, "07/44", "CORPO DYSTOPIA", "PAD",
                 "Atmospheric pad with 3D stereo detune", CYAN,
                 box=(32, 96, 330, 210)
             )
@@ -732,7 +732,7 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
             d.line([(stat1[0] + 16, stat1[1] + 40), (stat1[2] - 16, stat1[1] + 40)], fill=CYAN + (70,), width=1)
             for i, (v, lbl) in enumerate([
                 ("3D", "VOLUMETRIC OSCILLATORS"),
-                ("42", "CYBERPUNK PRESETS"),
+                ("44", "CYBERPUNK PRESETS"),
                 ("84", "HOST PARAMETERS"),
                 ("64", "STEP MATRIX"),
             ]):
@@ -755,17 +755,16 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
             d.text((stat2[0] + 16, stat2[1] + 14), "CORE TELEMETRY", font=F_HUD, fill=AMBER + (255,))
             d.line([(stat2[0] + 16, stat2[1] + 40), (stat2[2] - 16, stat2[1] + 40)], fill=AMBER + (70,), width=1)
             d.text((stat2[0] + 16, stat2[1] + 54), "DSP ENGINE: ACTIVE", font=F_SMALL, fill=LIME + (255,))
-            d.text((stat2[0] + 16, stat2[1] + 78), "TEMPO: 105.0 BPM", font=F_SMALL, fill=WHITE + (255,))
+            d.text((stat2[0] + 16, stat2[1] + 78), "TEMPO: 102.0 BPM", font=F_SMALL, fill=WHITE + (255,))
             d.text((stat2[0] + 16, stat2[1] + 102), "AUDIO: 48 kHz 32-BIT", font=F_SMALL, fill=CYAN + (255,))
             d.text((stat2[0] + 16, stat2[1] + 126), "SIMD: AVX2 OPTIMIZED", font=F_SMALL, fill=DIM + (255,))
 
     # -----------------------------------------------------------------------
-    # SCENE 2: DROP 1 - DUAL 3D HOLOGRAPHIC OSCILLATORS SHOWCASE (9.14s - 27.4s | Bars 4 - 12)
-    # Zeneth Cyber Midtempo Growl + Night City Midtempo Chug
+    # SCENE 2: DROP 1 - DUAL 3D HOLOGRAPHIC OSCILLATORS SHOWCASE (9.41s - 28.24s | Bars 4 - 12)
+    # Extra Terra Cyber Bass + Night City Midtempo Chug
     # -----------------------------------------------------------------------
-    elif t < 27.43:
+    elif t < 28.24:
         section_name = "3D OSCILLATORS // VOLUMETRIC HOLOGRAPHIC ENGINE"
-        local = (t - 9.14) / 18.29
 
         draw_feature_banner(
             img,
@@ -809,9 +808,9 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         lower_box1 = (48, 700, 940, 856)
         draw_cyber_card(img, lower_box1, CYAN, fill_alpha=225)
         d = ImageDraw.Draw(img)
-        d.text((lower_box1[0] + 20, lower_box1[1] + 16), "▶ ACTIVE PRESET: ZENETH CYBER MIDTEMPO", font=F_HUD, fill=CYAN + (255,))
-        d.text((lower_box1[0] + 20, lower_box1[1] + 44), "8-VOICE UNISON // STEREO SPREAD: 95% // WAVEFOLDED DRIVE: 2.8x", font=F_SMALL, fill=WHITE + (255,))
-        d.text((lower_box1[0] + 20, lower_box1[1] + 70), "WARP: FORMANT SHIFT · HARD TUBE CLIPPING · 105 BPM MIDTEMPO GROOVE", font=F_TINY, fill=DIM + (255,))
+        d.text((lower_box1[0] + 20, lower_box1[1] + 16), "▶ ACTIVE PRESET: EXTRA TERRA CYBER BASS", font=F_HUD, fill=CYAN + (255,))
+        d.text((lower_box1[0] + 20, lower_box1[1] + 44), "4-VOICE UNISON // STEREO SPREAD: 75% // WAVEFOLDED DRIVE: 2.8x", font=F_SMALL, fill=WHITE + (255,))
+        d.text((lower_box1[0] + 20, lower_box1[1] + 70), "WARP: WAVEFOLDER CLIP · ASYMMETRIC DRIVE · 102 BPM MIDTEMPO GROOVE", font=F_TINY, fill=DIM + (255,))
 
         lower_box2 = (980, 700, W - 48, 856)
         draw_cyber_card(img, lower_box2, MAGENTA, fill_alpha=225)
@@ -821,17 +820,16 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         d.text((lower_box2[0] + 20, lower_box2[1] + 70), "SUB-ZERO LATENCY · GPU-ACCELERATED HOLOGRAPHIC PROJECTION", font=F_TINY, fill=LIME + (255,))
 
     # -----------------------------------------------------------------------
-    # SCENE 3: DROP 2 - 3D WAVETABLE MORPH & COMBAT LEAD (27.43s - 45.71s | Bars 12 - 20)
-    # Cyberpunk 2077 Combat Lead + Reinelex Neuro Reese
+    # SCENE 3: DROP 2 - 3D WAVETABLE MORPH & EXTRA TERRA LEAD (28.24s - 47.06s | Bars 12 - 20)
+    # Extra Terra Cyber Lead + Reinelex Neuro Reese
     # -----------------------------------------------------------------------
-    elif t < 45.71:
-        section_name = "SIGNAL CHAIN // 3D MORPHING & COMBAT LEAD"
-        local = (t - 27.43) / 18.28
+    elif t < 47.06:
+        section_name = "SIGNAL CHAIN // 3D MORPHING & EXTRA TERRA LEAD"
 
         draw_feature_banner(
             img,
             "REAL-TIME 3D WAVETABLE POSITION MORPHING & ZDF FILTER",
-            "SEARING HARD-SYNC COMBAT LEAD · REINELEX NEURO REESE · 24dB RESONANT SQUELCH",
+            "EXTRA TERRA CYBER LEAD · REINELEX NEURO REESE · 24dB RESONANT SQUELCH",
             AMBER,
             y_pos=90,
         )
@@ -865,13 +863,13 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         stems_box = (980, 474, W - 48, 700)
         draw_cyber_card(img, stems_box, CYAN, fill_alpha=225)
         d = ImageDraw.Draw(img)
-        d.text((stems_box[0] + 20, stems_box[1] + 16), "MIDTEMPO COMBAT STEMS // 105 BPM", font=F_HUD, fill=CYAN + (255,))
+        d.text((stems_box[0] + 20, stems_box[1] + 16), "MIDTEMPO CYBER STEMS // 102 BPM", font=F_HUD, fill=CYAN + (255,))
         d.line([(stems_box[0] + 20, stems_box[1] + 44), (stems_box[2] - 20, stems_box[1] + 44)], fill=CYAN + (70,), width=1)
-        d.text((stems_box[0] + 20, stems_box[1] + 58), "▶ PRESET 39: CYBERPUNK 2077 COMBAT LEAD", font=F_SMALL, fill=WHITE + (255,))
-        d.text((stems_box[0] + 40, stems_box[1] + 80), "Hard-synced screamer tearing through stereo delay", font=F_TINY, fill=DIM + (255,))
-        d.text((stems_box[0] + 20, stems_box[1] + 108), "▶ PRESET 40: REINELEX NEURO REESE", font=F_SMALL, fill=WHITE + (255,))
-        d.text((stems_box[0] + 40, stems_box[1] + 130), "Wide detuned stereo Reese bass with chorus & drive", font=F_TINY, fill=DIM + (255,))
-        d.text((stems_box[0] + 20, stems_box[1] + 158), "▶ PRESET 41: NIGHT CITY MIDTEMPO CHUG", font=F_SMALL, fill=LIME + (255,))
+        d.text((stems_box[0] + 20, stems_box[1] + 58), "▶ PRESET 44: EXTRA TERRA CYBER LEAD", font=F_SMALL, fill=WHITE + (255,))
+        d.text((stems_box[0] + 40, stems_box[1] + 80), "Wide razor-sharp saw lead soaring through stereo delay", font=F_TINY, fill=DIM + (255,))
+        d.text((stems_box[0] + 20, stems_box[1] + 108), "▶ PRESET 43: EXTRA TERRA CYBER BASS", font=F_SMALL, fill=WHITE + (255,))
+        d.text((stems_box[0] + 40, stems_box[1] + 130), "Midtempo growl with wavefolding bite and punchy sub", font=F_TINY, fill=DIM + (255,))
+        d.text((stems_box[0] + 20, stems_box[1] + 158), "▶ PRESET 40: REINELEX NEURO REESE", font=F_SMALL, fill=LIME + (255,))
 
         # Lower Stats
         stat_b = (48, 700, W - 48, 856)
@@ -882,16 +880,16 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         d.text((stat_b[0] + 20, stat_b[1] + 70), "COMPATIBLE WITH ABLETON LIVE, FL STUDIO, REAPER, BITWIG, LOGIC PRO & CUBASE", font=F_TINY, fill=CYAN + (255,))
 
     # -----------------------------------------------------------------------
-    # SCENE 4: BREAKDOWN - 64-STEP SEQUENCER & 3D PHOSPHOR SCOPE (45.71s - 54.86s | Bars 20 - 24)
+    # SCENE 4: BREAKDOWN - 64-STEP SEQUENCER & 3D PHOSPHOR SCOPE (47.06s - 56.47s | Bars 20 - 24)
     # Ethereal Choir + Pad + ZDF Filter Sweep + Accelerating Snare Roll
     # -----------------------------------------------------------------------
-    elif t < 54.86:
+    elif t < 56.47:
         section_name = "PATTERN ENGINE // 64-STEP MATRIX & 3D PHOSPHOR SCOPE"
         place_screenshot(img, "seq", (32, 180, 1856, 530), zoom=1.0, focus=(0.5, 0.82), accent=MAGENTA)
 
-        # Active animated step cursor in real-time (16th note = BEAT/4 at 105 BPM)
+        # Active animated step cursor in real-time (16th note = BEAT/4 at 102 BPM)
         step_dur = BEAT / 4.0
-        step_idx = int((t - 45.71) / step_dur) % 16
+        step_idx = int((t - 47.06) / step_dur) % 16
         draw_animated_sequencer_leds(img, (32, 180, 1856, 710), step_idx)
 
         draw_feature_banner(img, "INTEGRATED 64-STEP NEON MATRIX SEQUENCER", "4 PAGES · PER-STEP NOTE, VELOCITY, SLIDE & ACCENT · SWING · KEY TRANSPOSE", MAGENTA, y_pos=90)
@@ -901,7 +899,7 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         for i, (col, title, sub, val) in enumerate([
             (MAGENTA, "MATRIX SEQUENCER", "4 Pages x 16 Steps // Slide & Accent", "64 STEPS"),
             (CYAN, "CYBER FX SUITE", "Distortion · Stereo Chorus · Delay · Reverb", "04 MODULES"),
-            (LIME, "FACTORY PATCH BANK", "Tested & Audited by Automated CI", "42 PATCHES"),
+            (LIME, "FACTORY PATCH BANK", "Tested & Audited by Automated CI", "44 PATCHES"),
         ]):
             bx = 32 + i * (cw + 48)
             card = (bx, 736, bx + cw, 856)
@@ -912,21 +910,21 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
             d.text((bx + 20, 826), sub, font=F_TINY, fill=DIM + (255,))
 
     # -----------------------------------------------------------------------
-    # SCENE 5: MAXIMUM CLIMAX - FULL ENGINE & DUAL 3D OSCILLATORS OVERDRIVE (54.86s - 61.71s | Bars 24 - 27)
+    # SCENE 5: MAXIMUM CLIMAX - FULL ENGINE & DUAL 3D OSCILLATORS OVERDRIVE (56.47s - 63.53s | Bars 24 - 27)
     # -----------------------------------------------------------------------
-    elif t < 61.71:
+    elif t < 63.53:
         section_name = "MAXIMUM CLIMAX // FULL ENGINE 3D OVERDRIVE"
         zoom = 1.0 + 0.02 * beat
         place_screenshot(img, "hero_gui", (360, 96, 1200, 850), zoom=zoom, focus=(0.5, 0.5), accent=MAGENTA)
 
         # Dynamic patch highlight during climax
-        c_sub = t - 54.86
-        if c_sub < 2.3:
-            p_num, p_name, p_cat, p_desc, p_col = "38/42", "ZENETH MIDTEMPO", "BASS", "Heavy neuro growls", CYAN
-        elif c_sub < 4.6:
-            p_num, p_name, p_cat, p_desc, p_col = "39/42", "COMBAT LEAD", "LEAD", "Hard-synced screamer", AMBER
+        c_sub = t - 56.47
+        if c_sub < 2.35:
+            p_num, p_name, p_cat, p_desc, p_col = "43/44", "EXTRA TERRA BASS", "BASS", "Signature wavefold growl", CYAN
+        elif c_sub < 4.70:
+            p_num, p_name, p_cat, p_desc, p_col = "44/44", "EXTRA TERRA LEAD", "LEAD", "Cyberpunk razor lead", AMBER
         else:
-            p_num, p_name, p_cat, p_desc, p_col = "40/42", "NEURO REESE", "BASS", "Wide detuned bass", NEON_PURPLE
+            p_num, p_name, p_cat, p_desc, p_col = "40/44", "NEURO REESE", "BASS", "Wide detuned stereo bass", NEON_PURPLE
 
         draw_active_preset_badge(img, p_num, p_name, p_cat, p_desc, p_col, box=(32, 96, 330, 210))
 
@@ -936,10 +934,10 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         d = ImageDraw.Draw(img)
         d.text((stat1[0] + 16, stat1[1] + 14), "FULL ENGINE STATUS", font=F_HUD, fill=p_col + (255,))
         d.line([(stat1[0] + 16, stat1[1] + 40), (stat1[2] - 16, stat1[1] + 40)], fill=p_col + (70,), width=1)
-        d.text((stat1[0] + 16, stat1[1] + 54), "10 SYNTH STEMS ACTIVE", font=F_SMALL, fill=WHITE + (255,))
+        d.text((stat1[0] + 16, stat1[1] + 54), "11 SYNTH STEMS ACTIVE", font=F_SMALL, fill=WHITE + (255,))
         d.text((stat1[0] + 16, stat1[1] + 78), "16/16 VOICES ENGAGED", font=F_SMALL, fill=LIME + (255,))
         d.text((stat1[0] + 16, stat1[1] + 102), "PEAK LEVEL: -0.5 dBFS", font=F_SMALL, fill=CYAN + (255,))
-        d.text((stat1[0] + 16, stat1[1] + 126), "TEMPO: 105 BPM MIDTEMPO", font=F_SMALL, fill=DIM + (255,))
+        d.text((stat1[0] + 16, stat1[1] + 126), "TEMPO: 102 BPM MIDTEMPO", font=F_SMALL, fill=DIM + (255,))
 
         # Right margin: Live vector oscilloscope
         osc_box = (1590, 96, W - 32, 260)
@@ -955,13 +953,13 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         d = ImageDraw.Draw(img)
         d.text((stat2[0] + 16, stat2[1] + 14), "MASTER BUS TELEMETRY", font=F_HUD, fill=AMBER + (255,))
         d.line([(stat2[0] + 16, stat2[1] + 40), (stat2[2] - 16, stat2[1] + 40)], fill=AMBER + (70,), width=1)
-        d.text((stat2[0] + 16, stat2[1] + 54), "RMS POWER: 0.367", font=F_SMALL, fill=WHITE + (255,))
-        d.text((stat2[0] + 16, stat2[1] + 78), "SIDECHAIN PUMP: ON", font=F_SMALL, fill=LIME + (255,))
+        d.text((stat2[0] + 16, stat2[1] + 54), "RMS POWER: 0.406", font=F_SMALL, fill=WHITE + (255,))
+        d.text((stat2[0] + 16, stat2[1] + 78), "EXTRA TERRA CYBERDRUMS: ON", font=F_SMALL, fill=LIME + (255,))
         d.text((stat2[0] + 16, stat2[1] + 102), "ANALOG SATURATION: ON", font=F_SMALL, fill=AMBER + (255,))
-        d.text((stat2[0] + 16, stat2[1] + 126), "ZERO LATENCY // 105 BPM", font=F_SMALL, fill=CYAN + (255,))
+        d.text((stat2[0] + 16, stat2[1] + 126), "ZERO LATENCY // 102 BPM", font=F_SMALL, fill=CYAN + (255,))
 
     # -----------------------------------------------------------------------
-    # SCENE 6: OUTRO - 3D DUAL HOLOGRAPHIC ROTATION & LINKS (61.71s - 66.0s | Bars 27 - 28)
+    # SCENE 6: OUTRO - 3D DUAL HOLOGRAPHIC ROTATION & LINKS (63.53s - 67.88s | Bars 27 - 28)
     # -----------------------------------------------------------------------
     else:
         section_name = "END OF TRANSMISSION // FREE & OPEN SOURCE"
@@ -1010,13 +1008,13 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
     g = 0.0
     if 2.4 <= t <= 3.3:
         g = 0.85 * (1.0 - (t - 2.4) / 0.9)
-    elif 9.05 <= t <= 9.45:
-        g = 1.0 * (1.0 - (t - 9.05) / 0.40)
-    elif 27.35 <= t <= 27.75:
-        g = 0.95 * (1.0 - (t - 27.35) / 0.40)
-    elif 54.75 <= t <= 55.25:
-        g = 1.1 * (1.0 - (t - 54.75) / 0.50)
-    for boundary in (45.71, 61.71):
+    elif 9.30 <= t <= 9.60:
+        g = 1.0 * (1.0 - (t - 9.30) / 0.30)
+    elif 28.10 <= t <= 28.45:
+        g = 0.95 * (1.0 - (t - 28.10) / 0.35)
+    elif 56.35 <= t <= 56.75:
+        g = 1.1 * (1.0 - (t - 56.35) / 0.40)
+    for boundary in (47.06, 63.53):
         if boundary <= t < boundary + 0.25:
             g = max(g, 0.75 * (1.0 - (t - boundary) / 0.25))
 
