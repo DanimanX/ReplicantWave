@@ -43,14 +43,11 @@ impl Default for ReplicantWave {
 impl Default for ReplicantWaveParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1260, 840),
+            editor_state: EguiState::from_size(1300, 920),
             gain: FloatParam::new(
                 "Master Gain",
                 util::db_to_gain(0.0),
-                FloatRange::Linear {
-                    min: 0.0,
-                    max: 1.5,
-                },
+                FloatRange::Linear { min: 0.0, max: 1.5 },
             )
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
@@ -82,15 +79,13 @@ impl Plugin for ReplicantWave {
     const VENDOR: &'static str = "DanimanX";
     const URL: &'static str = "https://github.com/DanimanX/ReplicantWave";
     const EMAIL: &'static str = "daniel.rojas@chileatiende.cl";
-    const VERSION: &'static str = "1.0.5";
+    const VERSION: &'static str = "1.1.0";
 
-    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
-        AudioIOLayout {
-            main_input_channels: None,
-            main_output_channels: NonZeroU32::new(2),
-            ..AudioIOLayout::const_default()
-        },
-    ];
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
+        main_input_channels: None,
+        main_output_channels: NonZeroU32::new(2),
+        ..AudioIOLayout::const_default()
+    }];
 
     const MIDI_INPUT: MidiConfig = MidiConfig::MidiCCs;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
@@ -139,15 +134,17 @@ impl Plugin for ReplicantWave {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        // Once per audio thread: flush denormals before any DSP runs.
+        thread_local! {
+            static DENORMALS: () = audio::denormal::flush_denormals_to_zero();
+        }
+        DENORMALS.with(|_| {});
+
         let mut engine = self.engine.lock();
 
         // Sync host transport & BPM
         let host_playing = context.transport().playing;
-        let host_bpm = context
-            .transport()
-            .tempo
-            .map(|t| t as f32)
-            .unwrap_or(0.0);
+        let host_bpm = context.transport().tempo.map(|t| t as f32).unwrap_or(0.0);
 
         // Process incoming MIDI events with smart 64-step sequencer bridging
         while let Some(event) = context.next_event() {
@@ -209,4 +206,4 @@ impl Vst3Plugin for ReplicantWave {
 }
 
 nih_export_clap!(ReplicantWave);
-nih_export_vst3!{ReplicantWave}
+nih_export_vst3! {ReplicantWave}

@@ -34,8 +34,8 @@ pub struct StereoFilter {
     pub enabled: bool,
     pub filter_type: FilterType,
     pub cutoff_hz: f32,
-    pub resonance: f32, // 0.0 to 1.0 (maps to Q 0.5 to 25.0)
-    pub drive: f32,     // 1.0 to 4.0
+    pub resonance: f32,    // 0.0 to 1.0 (maps to Q 0.5 to 25.0)
+    pub drive: f32,        // 1.0 to 4.0
     pub key_tracking: f32, // 0.0 to 1.0
     pub vel_tracking: f32, // 0.0 to 1.0
     pub env_amount: f32,   // -1.0 to +1.0
@@ -62,6 +62,12 @@ pub struct StereoFilter {
     cached_drive_in: f32,
     cached_drive: f32,
     cached_inv_drive: f32,
+
+    // Per-sample parameter smoothing to avoid zipper noise while a knob is
+    // dragged or a preset changes the cutoff/resonance/drive.
+    smoothed_cutoff: f32,
+    smoothed_reso: f32,
+    smoothed_drive: f32,
 }
 
 impl Default for StereoFilter {
@@ -93,6 +99,9 @@ impl Default for StereoFilter {
             cached_drive_in: -1.0,
             cached_drive: 1.0,
             cached_inv_drive: 1.0,
+            smoothed_cutoff: -1.0,
+            smoothed_reso: -1.0,
+            smoothed_drive: -1.0,
         }
     }
 }
@@ -103,6 +112,9 @@ impl StereoFilter {
         self.s2_l = [0.0; 2];
         self.s1_r = [0.0; 2];
         self.s2_r = [0.0; 2];
+        self.smoothed_cutoff = -1.0;
+        self.smoothed_reso = -1.0;
+        self.smoothed_drive = -1.0;
     }
 
     /// Process one stereo sample with cached SVF coefficients.
@@ -121,13 +133,33 @@ impl StereoFilter {
         // Clamp cutoff to safe audible range below Nyquist
         let target_cutoff = mod_cutoff_hz.clamp(20.0, sample_rate * 0.48);
 
+        // Smooth the (already modulated) cutoff and the static parameters with
+        // a short 2 ms one-pole. This kills zipper noise without softening the
+        // filter envelope in a musical way.
+        let smooth_coeff = 1.0 - (-1.0 / (0.002 * sample_rate)).exp();
+        if self.smoothed_cutoff < 0.0 {
+            self.smoothed_cutoff = target_cutoff;
+        }
+        if self.smoothed_reso < 0.0 {
+            self.smoothed_reso = self.resonance;
+        }
+        if self.smoothed_drive < 0.0 {
+            self.smoothed_drive = self.drive;
+        }
+        self.smoothed_cutoff += (target_cutoff - self.smoothed_cutoff) * smooth_coeff;
+        self.smoothed_reso += (self.resonance - self.smoothed_reso) * smooth_coeff;
+        self.smoothed_drive += (self.drive - self.smoothed_drive) * smooth_coeff;
+
+        let target_cutoff = self.smoothed_cutoff;
+        let target_reso = self.smoothed_reso;
+
         // Update filter coefficients only when cutoff, resonance, or sample rate change
         if (target_cutoff - self.cached_cutoff).abs() > 0.5
-            || (self.resonance - self.cached_reso).abs() > 0.002
+            || (target_reso - self.cached_reso).abs() > 0.002
             || (sample_rate - self.cached_sr).abs() > 1.0
         {
             self.cached_cutoff = target_cutoff;
-            self.cached_reso = self.resonance;
+            self.cached_reso = target_reso;
             self.cached_sr = sample_rate;
 
             // Prewarp frequency for bilinear transform: g = tan(pi * fc / fs)
@@ -138,7 +170,7 @@ impl StereoFilter {
                 w.tan()
             };
 
-            let q = 0.707 + self.resonance.clamp(0.0, 1.0) * 19.3;
+            let q = 0.707 + target_reso.clamp(0.0, 1.0) * 19.3;
             let k = 1.0 / q;
 
             let a1 = 1.0 / (1.0 + g * (g + k));
@@ -152,9 +184,9 @@ impl StereoFilter {
         }
 
         // Cache drive factors
-        if (self.drive - self.cached_drive_in).abs() > 0.01 {
-            self.cached_drive_in = self.drive;
-            let d = self.drive.clamp(1.0, 5.0);
+        if (self.smoothed_drive - self.cached_drive_in).abs() > 0.01 {
+            self.cached_drive_in = self.smoothed_drive;
+            let d = self.smoothed_drive.clamp(1.0, 5.0);
             self.cached_drive = d;
             self.cached_inv_drive = 1.0 / d.sqrt();
         }
@@ -181,15 +213,36 @@ impl StereoFilter {
         };
 
         // First SVF stage
-        let out1 = svf_stage(input, a1, a2, a3, k, &mut s1[0], &mut s2[0], self.filter_type, false);
+        let out1 = svf_stage(
+            input,
+            a1,
+            a2,
+            a3,
+            k,
+            &mut s1[0],
+            &mut s2[0],
+            self.filter_type,
+            false,
+        );
 
         match self.filter_type {
-            FilterType::LowPass12 | FilterType::HighPass12 | FilterType::BandPass12 | FilterType::Notch => {
-                out1
-            }
+            FilterType::LowPass12
+            | FilterType::HighPass12
+            | FilterType::BandPass12
+            | FilterType::Notch => out1,
             FilterType::LowPass24 | FilterType::HighPass24 | FilterType::BandPass24 => {
                 // Second stage cascaded for 24 dB/oct slope
-                svf_stage(out1, a1, a2, a3, k, &mut s1[1], &mut s2[1], self.filter_type, true)
+                svf_stage(
+                    out1,
+                    a1,
+                    a2,
+                    a3,
+                    k,
+                    &mut s1[1],
+                    &mut s2[1],
+                    self.filter_type,
+                    true,
+                )
             }
         }
     }

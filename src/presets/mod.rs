@@ -2,12 +2,12 @@
 
 pub mod factory;
 
-use serde::{Deserialize, Serialize};
 use crate::audio::filter::FilterType;
 use crate::audio::fx::distortion::DistortionMode;
 use crate::audio::oscillator::{NoiseType, SubWave};
 use crate::audio::step_sequencer::{SeqMode, SeqRate, Step, MAX_STEPS};
 use crate::audio::SynthEngine;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SynthPreset {
@@ -202,8 +202,9 @@ impl SynthPreset {
 
         engine.fx.gate.enabled = self.gate_enabled;
 
-        // Sequencer
-        engine.sequencer.running = self.seq_running;
+        // Sequencer. Loading a patch never starts the transport: the pattern is
+        // loaded and armed, and PLAY (or an explicit DAW sync) starts it.
+        engine.sequencer.running = false;
         engine.sequencer.mode = SeqMode::from_index(self.seq_mode);
         engine.sequencer.length = self.seq_length.clamp(1, MAX_STEPS);
         engine.sequencer.rate = SeqRate::from_index(self.seq_rate);

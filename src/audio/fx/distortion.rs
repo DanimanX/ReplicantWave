@@ -30,6 +30,10 @@ pub struct Distortion {
     crush_phase: f32,
     crush_hold_l: f32,
     crush_hold_r: f32,
+    // Bypass/enable and preset changes are crossfaded instead of switching
+    // instantly, so toggling or loading a preset never clicks.
+    smoothed_mix: f32,
+    sample_rate: f32,
 }
 
 impl Default for Distortion {
@@ -42,20 +46,35 @@ impl Default for Distortion {
             crush_phase: 0.0,
             crush_hold_l: 0.0,
             crush_hold_r: 0.0,
+            smoothed_mix: 0.0,
+            sample_rate: 44100.0,
         }
     }
 }
 
 impl Distortion {
+    pub fn set_sample_rate(&mut self, sr: f32) {
+        self.sample_rate = sr.max(1000.0);
+    }
+
     pub fn reset(&mut self) {
         self.crush_phase = 0.0;
         self.crush_hold_l = 0.0;
         self.crush_hold_r = 0.0;
+        self.smoothed_mix = 0.0;
     }
 
     #[inline(always)]
     pub fn process_sample(&mut self, in_l: f32, in_r: f32) -> (f32, f32) {
-        if !self.enabled || self.mix <= 0.001 {
+        let target_mix = if self.enabled {
+            self.mix.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let coeff = 1.0 - (-1.0 / (0.004 * self.sample_rate)).exp();
+        self.smoothed_mix += (target_mix - self.smoothed_mix) * coeff;
+        if self.smoothed_mix <= 0.0001 && target_mix <= 0.0 {
+            self.smoothed_mix = 0.0;
             return (in_l, in_r);
         }
 
@@ -106,8 +125,11 @@ impl Distortion {
             }
         };
 
-        let dry_gain = 1.0 - self.mix;
-        let wet_gain = self.mix;
-        (in_l * dry_gain + wet_l * wet_gain, in_r * dry_gain + wet_r * wet_gain)
+        let wet_gain = self.smoothed_mix;
+        let dry_gain = 1.0 - wet_gain;
+        (
+            in_l * dry_gain + wet_l * wet_gain,
+            in_r * dry_gain + wet_r * wet_gain,
+        )
     }
 }

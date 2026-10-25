@@ -113,7 +113,12 @@ impl WavetableOscillator {
     /// Process one sample block or sample.
     /// Returns stereo output `(left, right)`.
     #[inline(always)]
-    pub fn process_sample(&mut self, wt: &Wavetable, base_freq: f32, sample_rate: f32) -> (f32, f32) {
+    pub fn process_sample(
+        &mut self,
+        wt: &Wavetable,
+        base_freq: f32,
+        sample_rate: f32,
+    ) -> (f32, f32) {
         if !self.enabled || self.level_gain <= 0.0001 {
             return (0.0, 0.0);
         }
@@ -285,9 +290,27 @@ impl SubOscillator {
                 }
             }
             SubWave::Saw => 2.0 * (self.phase - 0.5),
-            SubWave::Pulse50 => if self.phase < 0.5 { 1.0 } else { -1.0 },
-            SubWave::Pulse25 => if self.phase < 0.25 { 1.0 } else { -1.0 },
-            SubWave::Pulse12 => if self.phase < 0.125 { 1.0 } else { -1.0 },
+            SubWave::Pulse50 => {
+                if self.phase < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            SubWave::Pulse25 => {
+                if self.phase < 0.25 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            SubWave::Pulse12 => {
+                if self.phase < 0.125 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
         };
 
         self.phase = (self.phase + phase_inc) - (self.phase + phase_inc).floor();
@@ -381,7 +404,15 @@ impl NoiseGenerator {
                 self.b3 = 0.86650 * self.b3 + white * 0.3104856;
                 self.b4 = 0.55000 * self.b4 + white * 0.5329522;
                 self.b5 = -0.7616 * self.b5 - white * 0.0168980;
-                (self.b0 + self.b1 + self.b2 + self.b3 + self.b4 + self.b5 + self.b6 + white * 0.5362) * 0.11
+                (self.b0
+                    + self.b1
+                    + self.b2
+                    + self.b3
+                    + self.b4
+                    + self.b5
+                    + self.b6
+                    + white * 0.5362)
+                    * 0.11
             }
             NoiseType::CyberBit => {
                 // Quantized harsh digital noise

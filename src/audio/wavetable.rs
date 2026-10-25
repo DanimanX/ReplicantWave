@@ -58,7 +58,11 @@ impl Wavetable {
         let n = self.table_size;
         let mask = n - 1;
         let wrapped_phase = phase.fract();
-        let wrapped_phase = if wrapped_phase < 0.0 { wrapped_phase + 1.0 } else { wrapped_phase };
+        let wrapped_phase = if wrapped_phase < 0.0 {
+            wrapped_phase + 1.0
+        } else {
+            wrapped_phase
+        };
         let index_f = wrapped_phase * n as f32;
         let idx0 = (index_f as usize) & mask;
         let idx1 = (idx0 + 1) & mask;
@@ -71,14 +75,18 @@ impl Wavetable {
 
     /// Load wavetable from a WAV file (supports 256, 512, 1024, 2048 sample sizes).
     pub fn from_wav_file(path: &std::path::Path) -> Result<Self, String> {
-        let mut reader = hound::WavReader::open(path)
-            .map_err(|e| format!("Failed to open WAV: {}", e))?;
+        let mut reader =
+            hound::WavReader::open(path).map_err(|e| format!("Failed to open WAV: {}", e))?;
         let spec = reader.spec();
         let samples: Vec<f32> = match spec.sample_format {
             hound::SampleFormat::Float => reader.samples::<f32>().filter_map(Result::ok).collect(),
             hound::SampleFormat::Int => {
                 let max_val = (1i64 << (spec.bits_per_sample - 1)) as f32;
-                reader.samples::<i32>().filter_map(Result::ok).map(|s| s as f32 / max_val).collect()
+                reader
+                    .samples::<i32>()
+                    .filter_map(Result::ok)
+                    .map(|s| s as f32 / max_val)
+                    .collect()
             }
         };
 
@@ -89,7 +97,10 @@ impl Wavetable {
         // Detect frame size (prefer 2048, or fallback to power of two)
         let total_samples = samples.len() / spec.channels as usize;
         let mono_samples: Vec<f32> = if spec.channels > 1 {
-            samples.chunks(spec.channels as usize).map(|c| c[0]).collect()
+            samples
+                .chunks(spec.channels as usize)
+                .map(|c| c[0])
+                .collect()
         } else {
             samples
         };
@@ -117,7 +128,8 @@ impl Wavetable {
             frames.push(frame);
         }
 
-        let name = path.file_stem()
+        let name = path
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("Custom Wavetable")
             .to_string();
@@ -125,8 +137,6 @@ impl Wavetable {
         Ok(Self::new(name, frame_size, frames))
     }
 }
-
-
 
 /// Collection of factory cyberpunk wavetables.
 pub struct WavetableBank {

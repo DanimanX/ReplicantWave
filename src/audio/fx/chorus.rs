@@ -2,21 +2,22 @@
 
 use std::f32::consts::PI;
 
-const MAX_CHORUS_DELAY_SAMPLES: usize = 2048;
+const MAX_CHORUS_DELAY_SAMPLES: usize = 8192;
 
 #[derive(Clone, Debug)]
 pub struct Chorus {
     pub enabled: bool,
-    pub rate_hz: f32,   // 0.1 to 10.0 Hz
-    pub depth_ms: f32,  // 0.1 to 20.0 ms
-    pub delay_ms: f32,  // 0.1 to 30.0 ms
-    pub width: f32,     // 0.0 to 1.0 (phase spread)
-    pub mix: f32,       // 0.0 to 1.0
+    pub rate_hz: f32,  // 0.1 to 10.0 Hz
+    pub depth_ms: f32, // 0.1 to 20.0 ms
+    pub delay_ms: f32, // 0.1 to 30.0 ms
+    pub width: f32,    // 0.0 to 1.0 (phase spread)
+    pub mix: f32,      // 0.0 to 1.0
 
     buffer_l: Vec<f32>,
     buffer_r: Vec<f32>,
     write_idx: usize,
     lfo_phase: f32,
+    smoothed_mix: f32,
     sample_rate: f32,
 }
 
@@ -33,6 +34,7 @@ impl Default for Chorus {
             buffer_r: vec![0.0; MAX_CHORUS_DELAY_SAMPLES],
             write_idx: 0,
             lfo_phase: 0.0,
+            smoothed_mix: 0.0,
             sample_rate: 44100.0,
         }
     }
@@ -48,11 +50,20 @@ impl Chorus {
         self.buffer_r.fill(0.0);
         self.write_idx = 0;
         self.lfo_phase = 0.0;
+        self.smoothed_mix = 0.0;
     }
 
     #[inline(always)]
     pub fn process_sample(&mut self, in_l: f32, in_r: f32) -> (f32, f32) {
-        if !self.enabled || self.mix <= 0.001 {
+        let target_mix = if self.enabled {
+            self.mix.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let coeff = 1.0 - (-1.0 / (0.004 * self.sample_rate)).exp();
+        self.smoothed_mix += (target_mix - self.smoothed_mix) * coeff;
+        if self.smoothed_mix <= 0.0001 && target_mix <= 0.0 {
+            self.smoothed_mix = 0.0;
             return (in_l, in_r);
         }
 
@@ -70,8 +81,14 @@ impl Chorus {
         let lfo_l = (self.lfo_phase * 2.0 * PI).sin();
         let lfo_r = ((self.lfo_phase + self.width * 0.25) * 2.0 * PI).sin();
 
-        let base_delay_samples = (self.delay_ms * 0.001 * sr).clamp(1.0, (buf_len - 100) as f32);
-        let mod_depth_samples = (self.depth_ms * 0.001 * sr).min(base_delay_samples * 0.8);
+        // Keep the full modulated read range inside the delay line at every
+        // supported sample rate. The old 2048-sample line could wrap at 48 kHz
+        // with the documented delay/depth settings, which produced crackle.
+        let max_delay = (buf_len - 4) as f32;
+        let base_delay_samples = (self.delay_ms * 0.001 * sr).clamp(1.0, max_delay * 0.5);
+        let mod_depth_samples = (self.depth_ms * 0.001 * sr)
+            .min(base_delay_samples * 0.8)
+            .min((max_delay - base_delay_samples - 2.0).max(0.0));
 
         let read_time_l = base_delay_samples + lfo_l * mod_depth_samples;
         let read_time_r = base_delay_samples + lfo_r * mod_depth_samples;
@@ -81,10 +98,13 @@ impl Chorus {
 
         self.write_idx = (self.write_idx + 1) % buf_len;
 
-        let dry_gain = 1.0 - self.mix * 0.5;
-        let wet_gain = self.mix;
+        let wet_gain = self.smoothed_mix;
+        let dry_gain = 1.0 - wet_gain * 0.5;
 
-        (in_l * dry_gain + wet_l * wet_gain, in_r * dry_gain + wet_r * wet_gain)
+        (
+            in_l * dry_gain + wet_l * wet_gain,
+            in_r * dry_gain + wet_r * wet_gain,
+        )
     }
 }
 

@@ -29,6 +29,10 @@ pub struct Voice {
     pub is_releasing: bool,
     pub age: u64,
     pub active_midi_note: u8,
+    // Click-free voice stealing: while a voice is being reassigned we fade its
+    // current output to zero over a few dozen samples before retriggering.
+    steal_pending: Option<(u8, f32, u64)>,
+    steal_gain: f32,
     sample_rate: f32,
     cached_note: f32,
     cached_freq: f32,
@@ -68,6 +72,8 @@ impl Default for Voice {
             is_releasing: false,
             age: 0,
             active_midi_note: 60,
+            steal_pending: None,
+            steal_gain: 1.0,
             sample_rate: 44100.0,
             cached_note: -999.0,
             cached_freq: 440.0,
@@ -95,6 +101,8 @@ impl Voice {
         self.velocity = vel.clamp(0.01, 1.0);
         self.is_releasing = false;
         self.age = age_id;
+        self.steal_pending = None;
+        self.steal_gain = 1.0;
 
         if glide && glide_time_s > 0.001 {
             let glide_samples = (glide_time_s * self.sample_rate).max(1.0);
@@ -124,6 +132,28 @@ impl Voice {
         self.is_releasing = false;
     }
 
+    /// Reassign an already sounding voice without producing a waveform
+    /// discontinuity: the old note fades over ~1.5 ms and the new one is
+    /// started only once the output has reached zero.
+    pub fn steal_to(&mut self, note: u8, vel: f32, age_id: u64) {
+        if !self.is_active() {
+            self.note_on(note, vel, false, 0.0, age_id);
+            return;
+        }
+        self.steal_pending = Some((note, vel, age_id));
+    }
+
+    /// Restart a voice that has already been faded to silence (steal path).
+    /// Envelope levels and filter memory are cleared while the output is zero,
+    /// so the new note cannot produce a step discontinuity.
+    fn retrigger_from_silence(&mut self, note: u8, vel: f32, age_id: u64) {
+        self.amp_env.reset();
+        self.filter_env.reset();
+        self.mod_env.reset();
+        self.filter.reset();
+        self.note_on(note, vel, false, 0.0, age_id);
+    }
+
     pub fn note_off(&mut self) {
         self.is_releasing = true;
         self.amp_env.release();
@@ -137,6 +167,13 @@ impl Voice {
         self.mod_env.reset();
         self.filter.reset();
         self.is_releasing = false;
+        self.steal_pending = None;
+        self.steal_gain = 1.0;
+    }
+
+    #[inline(always)]
+    pub fn current_amp_level(&self) -> f32 {
+        self.amp_env.current_value()
     }
 
     #[inline(always)]
@@ -151,9 +188,18 @@ impl Voice {
             return (0.0, 0.0);
         }
 
+        // Finish a pending voice steal only after the old note has faded out.
+        if let Some((note, vel, age_id)) = self.steal_pending {
+            self.steal_gain -= 1.0 / 64.0;
+            if self.steal_gain <= 0.0 {
+                self.retrigger_from_silence(note, vel, age_id);
+            }
+        }
+
         // Portamento / Glide smoothing
         if self.glide_coeff > 0.0 {
-            self.current_note = self.target_note + (self.current_note - self.target_note) * self.glide_coeff;
+            self.current_note =
+                self.target_note + (self.current_note - self.target_note) * self.glide_coeff;
         } else {
             self.current_note = self.target_note;
         }
@@ -193,27 +239,35 @@ impl Voice {
         let mut bypass_r = 0.0;
 
         if self.filter.route_osc1 {
-            pre_flt_l += o1_l; pre_flt_r += o1_r;
+            pre_flt_l += o1_l;
+            pre_flt_r += o1_r;
         } else {
-            bypass_l += o1_l; bypass_r += o1_r;
+            bypass_l += o1_l;
+            bypass_r += o1_r;
         }
 
         if self.filter.route_osc2 {
-            pre_flt_l += o2_l; pre_flt_r += o2_r;
+            pre_flt_l += o2_l;
+            pre_flt_r += o2_r;
         } else {
-            bypass_l += o2_l; bypass_r += o2_r;
+            bypass_l += o2_l;
+            bypass_r += o2_r;
         }
 
         if self.filter.route_sub {
-            pre_flt_l += sub_l; pre_flt_r += sub_r;
+            pre_flt_l += sub_l;
+            pre_flt_r += sub_r;
         } else {
-            bypass_l += sub_l; bypass_r += sub_r;
+            bypass_l += sub_l;
+            bypass_r += sub_r;
         }
 
         if self.filter.route_noise {
-            pre_flt_l += ns_l; pre_flt_r += ns_r;
+            pre_flt_l += ns_l;
+            pre_flt_r += ns_r;
         } else {
-            bypass_l += ns_l; bypass_r += ns_r;
+            bypass_l += ns_l;
+            bypass_r += ns_r;
         }
 
         // Calculate filter cutoff with key tracking, envelope amount, and external mods
@@ -222,12 +276,17 @@ impl Voice {
         let lfo_mod = lfo1_val * 400.0;
         let seq_mod = extra_cutoff_mod * 4000.0;
 
-        let dynamic_cutoff = (self.filter.cutoff_hz + key_track_offset + env_mod + lfo_mod + seq_mod).clamp(20.0, 20000.0);
+        let dynamic_cutoff =
+            (self.filter.cutoff_hz + key_track_offset + env_mod + lfo_mod + seq_mod)
+                .clamp(20.0, 20000.0);
 
-        let (flt_l, flt_r) = self.filter.process_sample(pre_flt_l, pre_flt_r, dynamic_cutoff, self.sample_rate);
+        let (flt_l, flt_r) =
+            self.filter
+                .process_sample(pre_flt_l, pre_flt_r, dynamic_cutoff, self.sample_rate);
 
-        let final_l = (flt_l + bypass_l) * amp_level;
-        let final_r = (flt_r + bypass_r) * amp_level;
+        let steal_gain = self.steal_gain.clamp(0.0, 1.0);
+        let final_l = (flt_l + bypass_l) * amp_level * steal_gain;
+        let final_r = (flt_r + bypass_r) * amp_level * steal_gain;
 
         (final_l, final_r)
     }

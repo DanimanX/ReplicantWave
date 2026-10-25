@@ -38,7 +38,7 @@ There is also a direct **☕ DONATE** button in the top navigation bar of the pl
 
 **ReplicantWave** is a next-generation Rust-powered clone and reimagining of the Wavetable architecture, infused with a **Cyberpunk 2077 / Neon Noir** aesthetic and engineered for ultra-low CPU utilization.
 
-Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer with a sliding navigation drawer** (inspired by *Replicant303*), full **Cytomic ZDF multimode filtering**, a multi-algorithm **Cyber Distortion engine**, modular analog patch cables, real-time FX response monitors, and **16 factory presets** tailored for dark electronic music.
+Featuring **2 multi-frame wavetable oscillators**, a **64-step neon step-matrix sequencer**, full **Cytomic ZDF multimode filtering**, a multi-algorithm **Cyber Distortion engine**, a live phosphor oscilloscope, a live ZDF filter response, and **38 factory presets** covering bass, pads, drones, leads, arps, sequences and FX for dark electronic music.
 
 ---
 
@@ -59,8 +59,8 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer
   6. *Dystopian Steel* (Metallic inharmonic bell to harsh digital grind)
   7. *PWM Hyper* (Continuous pulse-width sweep 50% to 4%)
   8. *Sub Zero* (Deep saturation to wavefolded bass fundamentals)
-- **Custom WAV Wavetable Loader**:
-  - Drag and drop or browse standard 256, 512, 1024, or 2048-sample WAV files (compatible with Serum, Vital, and SocaLabs Wavetable formats).
+- **WAV Wavetable Support**:
+  - The engine can load standard 256, 512, 1024, or 2048-sample WAV wavetables (Serum/Vital/SocaLabs compatible) through `Wavetable::from_wav_file`.
 - **Sub Oscillator**:
   - 6 selectable waveforms: Sine, Triangle, Saw, Pulse 50%, Pulse 25%, Pulse 12%.
   - Octave shifting (-2, -1, 0) and stereo panning.
@@ -75,49 +75,39 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer
   - Per-source routing matrix: route or bypass OSC 1, OSC 2, Sub, and Noise independently.
   - Key tracking and Velocity tracking.
 
-### 🎛️ Pure Analog Hardware Rotary Knobs (Zero Sliders)
-- **Authentic Potentiometers**: 11 radial graduation marks, metallic knurled chassis, brushed dual-tone dial cap, illuminated neon arc track, high-contrast needle with neon pip, and live formatted parameter values displayed directly underneath.
-- Mouse-wheel support, fine-tune precision drag (`Shift` modifier), double-click reset, and contextual logarithmic/linear scaling.
-- Modular rack enclosures with corner chassis screws and realistic curved analog patch cables.
+### 🎛️ Neon HUD Controls
+- **Rotary knobs**: 11 machined tick marks, dark glass cap, glowing value arc, bright needle and hover readout. Mouse-wheel support, fine-tune drag (`Shift`), and double-click reset.
+- **HUD sliders**: compact glowing horizontal controls for the FX rack, with live value readouts.
+- **Cut-corner glass panels**, animated scanlines, a synthwave floor grid and neon corner brackets — a pure NIGHT CITY HUD, no hardware screws or patch cables.
 
 ### 🔮 3D GPU-Accelerated Animated Holographic Wavetable Engine
 - **Orbital 3D Perspective Waterfall Mesh**: Dynamic 3D undulating terrain rendered directly via hardware GPU triangles (`egui::Mesh`) with depth fog, dynamic perspective tilt, and wireframe ribbons.
 - **Sweeping Depth Laser Scanner**: Sweeps back and forth through depth, casting glowing highlights on terrain slices.
-- **Peak Target Marker & Traveling Cyber Orb**: Real-time laser sweep synchronized to the wavetable frame index and flying cyber energy particle nodes at 60 FPS.
+- **Peak Marker & Depth Scan**: Real-time peak marker and a sweeping depth highlight synchronized to the wavetable frame index at 60 FPS.
 
-### ⚡ 64-Step Sliding Sequencer (Replicant303 Style)
-- **Collapsible Drawer Handle**:
-  - Slides open and closed with a click (`[ ⚡ 64-STEP PATTERN SEQUENCER // EXPAND / COLLAPSE ⚡ ]`).
-- **Interactive 64-Step Radar Overview Bar**:
-  - Miniature timeline showing all 64 steps, gate status, accent, active playhead, and clickable viewport jump bracket.
-- **Rotary Dial & Quick-Page Jump**:
-  - Smooth rotary dial navigation `VIEW [0..48]` plus quick-page buttons: `[1-16]`, `[17-32]`, `[33-48]`, `[49-64]`.
-  - **FOLLOW Mode**: Automatically tracks the active playhead across all 64 steps in real time.
-- **DAW & Standalone Seamless Bridging**:
-  - **SYNC: DAW**: Automatically locks and triggers with host DAW transport playback in VST3/CLAP/AU.
-  - **KEY TRIG**: Incoming MIDI notes transpose the pattern to that key (`root_note = note`) and trigger playback in sync.
-  - **FREE RUN**: Internal standalone tempo clock with dedicated `BPM` analog rotary knob (40 to 240 BPM).
-- **Per-Step Hardware Controls**:
-  - Gate (On/Off toggle) with live neon LED cursor.
-  - Analog Pitch Knob (-24 to +24 semitones with real-time musical note display: C2, D#2, etc.).
-  - Analog Velocity Knob (1 to 127).
-  - Slide flag (`SLD`): True TB-303 style acid legato glide without retriggering envelopes.
-  - Accent flag (`ACC`): Velocity boost with dynamic filter resonance expansion.
-- **Sequencer Modes**:
-  - *Internal Synth*: Triggers internal synth voices directly with full polyphony management and automatic note-offs.
-  - *Cutoff Mod*: Modulates filter cutoff rhythmically.
-  - *WT Pos Mod*: Modulates wavetable position rhythmically.
-- **Clock & Groove**:
-  - Rates: 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/16D, 1/32.
-  - Groove Swing (0% to 75% analog rotary knob).
-  - 🎲 Randomize (musical pentatonic/minor cyberpunk intervals) and ✖ Clear utilities.
+### ⚡ 64-Step Neon Step Matrix
+- **Full-width deck** with transport, mode, length and rate always visible.
+- **Interactive 64-Step Radar**: gate status, accent, pitch, active playhead and a page viewport bracket.
+- **Page navigation**: `[1-16]`, `[17-32]`, `[33-48]`, `[49-64]`, with optional playhead follow.
+- **MIDI / transport behaviour**:
+  - Incoming MIDI notes **always play the synth** and **never start the sequencer**.
+  - **PLAY** starts the internal sequencer. **SYNC** (opt-in) follows the DAW transport.
+  - **KEY TRIG** (opt-in) transposes a sequence that is already running; it cannot start one.
+  - **FREE RUN** uses the internal BPM clock (40–240 BPM).
+- **Per-Step Controls**:
+  - Cut-corner gate pad with note name, velocity bar and live playhead glow.
+  - Pitch knob (-24 to +24 semitones, real-time note display).
+  - Accent (`A`) and slide (`S`) flags. Slide is true TB-303 legato without envelope retrigger.
+- **Sequencer Modes**: *Internal Synth*, *Cutoff Mod*, *WT Pos Mod*, *Off*.
+- **Clock & Groove**: 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/16D, 1/32; swing 0–75%; musical `RND SEQ` pattern generator.
 
-### 🧪 Cyberpunk Multi-FX Engine with Live Curve Monitors
+### 🧪 Cyberpunk Multi-FX Engine
 - **Trance Gate**: 16-step stereo rhythmic chopper with attack/release smoothing.
-- **Stereo Chorus**: Dual LFO modulated delay lines with live sine modulation monitor.
-- **Cyber Distortion**: Mini real-time saturation curve monitor (*Overdrive*, *Bitcrusher*, *Fire Amp*, *Grind Amp*).
-- **Ping-Pong Delay**: Tempo-synced stereo delay with live ping-pong bounce taps monitor.
-- **Diffusion Reverb**: Algorithmic stereo plate/hall reverb with tuned comb filters and live diffusion decay monitor.
+- **Stereo Chorus**: Dual LFO modulated delay lines with stereo width.
+- **Cyber Distortion**: *Overdrive*, *Bitcrusher*, *Fire Amp* and *Grind Amp* algorithms.
+- **Ping-Pong Delay**: Tempo-synced stereo delay with damped feedback.
+- **Diffusion Reverb**: Algorithmic stereo plate/hall reverb with tuned comb/allpass diffusion.
+- **Click-free bypass**: every FX block crossfades over 4 ms and the master output is smoothly saturated, so toggling presets or effects does not click.
 
 ### 🔋 CPU-Friendly Ultra-Optimized DSP Architecture
 - **Eliminated CPU Spikes**: Precalculated envelope decay/release multipliers eliminate transcendental `.exp()` in the sample loop; cached SVF coefficients avoid `tan()` per sample; unison phase gains precalculated outside loops.
@@ -128,26 +118,21 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step pattern sequencer
 
 ## 🎚️ Factory Presets (Cyberpunk Soundbank)
 
-ReplicantWave comes loaded with 16 high-voltage cyberpunk presets:
+ReplicantWave ships with **38 factory patches** across seven banks. Every patch is rendered offline by `tests/preset_audio_test.rs` and checked for NaNs, silence, DC offset, runaway loudness and hard clipping.
 
-| Preset Name | Category | Characteristics |
-| :--- | :--- | :--- |
-| **Night City Bass** | Bass | Cyber Neuro table, ZDF 24dB lowpass, aggressive overdrive & stereo chorus. |
-| **Arasaka Tower** | Lead | Analog Morph table, 7th interval tuning, bitcrushed delay & long hall reverb. |
-| **Combat Zone Lead** | Lead | Digital FM table, high pitch drive, wide chorus & rhythmic trance gate. |
-| **Megabuilding Pad** | Pad | Slow attack vocaloid morph, subtle PWM detune & deep cathedral diffusion. |
-| **Neon Highway** | Sequence | 16-step rolling acid sequence, 132 BPM, key-tracked resonance squeal. |
-| **Chrome Acid 303** | Acid | Cyber Acid wavetable, aggressive portamento slide, snappy accent resonance. |
-| **Braindance Sub** | Bass | Sub Zero table, sine sub-oscillator sub-bass reinforcement & softclip. |
-| **Cybernetic Choir** | Pad | Vocaloid synth table, multi-frame morphing with stereo ping-pong spatial width. |
-| **Blackwall Protocol** | Lead | Dystopian steel table, aggressive fire amp distortion & ping-pong delay. |
-| **Neuro Grid Pluck** | Pluck | Fast 5ms ADSR transient, steep 24dB bandpass filter & rhythmic ping-pong. |
-| **Netrunner Drone** | Drone | PWM hyper table, unison 8-voice super-detune & endless ambient reverb. |
-| **Cyber Glitch 64-Step** | Sequence | Full 64-step fast bitcrushed modular sequence with sliding viewport navigation. |
-| **Tactical Scanner** | Sequence | 64-step tactical scanner sweep with rhythmic bandpass filter modulation. |
-| **Orbital Space Station** | Pad | Dystopian metallic wavetable with slow 1.2s attack and deep diffusion reverb. |
-| **Subsurface 808** | Bass | Heavy sub-bass with soft analog saturation and pitch envelope punch. |
-| **Valkyrie Chime** | Lead | Digital FM bell harmonic wavetable with stereo ping-pong delay and wide chorus. |
+**BASS** — Night City Bass · Subdermal 808 Rumble · Combat Zone Bass · Chrome Sub Assault · Neuro Reaper Bass · Acid Rain Bass
+
+**PAD** — Arasaka Matrix Pad · Synthetic Tears Pad · Neon Rain Pad · Corpo Cathedral · Ghost Protocol Choir · Cryo Sleep Pad · Ghost In The Wire Choir · Braindance Memory
+
+**DRONE** — Corpo Tower Dystopia · Blackwall Drone · Toxic Fog Drone · Singularity Hum · Arasaka Orbital Drone
+
+**LEAD** — Neon Blade 2049 · Darksynth Power Stab · Chrome Acid 303 · Overclocked Sync Screamer · Nightside Razor Lead · Laser Katana · Neon Samurai Lead · Void Screamer Lead
+
+**ARP** — Netrunner Arp · Data Stream Arp · Kiroshi Rain Arp
+
+**SEQ** — Cyber Glitch 64-Step · Kiroshi Scanner Sequence · Megacity Combat 2077 · Afterlife Future Rave · Afterlife Run · Braindance 64
+
+**FX** — EMP Burst · Cyberpsychosis
 
 ---
 

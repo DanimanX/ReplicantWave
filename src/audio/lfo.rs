@@ -31,10 +31,10 @@ impl LfoShape {
 pub struct Lfo {
     pub enabled: bool,
     pub shape: LfoShape,
-    pub rate_hz: f32,       // 0.01 to 50.0 Hz
+    pub rate_hz: f32, // 0.01 to 50.0 Hz
     pub sync: bool,
     pub sync_beat_division: f32, // In beats, e.g. 0.25 = 1/16th, 1.0 = 1/4th, 4.0 = 1 bar
-    pub depth: f32,         // -1.0 to 1.0
+    pub depth: f32,              // -1.0 to 1.0
     pub retrigger: bool,
     pub fade_s: f32,
 
@@ -124,7 +124,13 @@ impl Lfo {
             }
             LfoShape::SawUp => 2.0 * (self.phase - 0.5),
             LfoShape::SawDown => 2.0 * (0.5 - self.phase),
-            LfoShape::Square => if self.phase < 0.5 { 1.0 } else { -1.0 },
+            LfoShape::Square => {
+                if self.phase < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
             LfoShape::SampleAndHold => self.hold_value,
             LfoShape::Noise => self.next_random(),
         };

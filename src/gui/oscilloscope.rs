@@ -27,7 +27,10 @@ pub fn draw_oscilloscope(ui: &mut Ui, samples: &[f32], width: f32, height: f32) 
     let mut scan_y = rect.min.y + 2.0;
     while scan_y < rect.max.y {
         painter.line_segment(
-            [pos2(rect.min.x + 2.0, scan_y), pos2(rect.max.x - 2.0, scan_y)],
+            [
+                pos2(rect.min.x + 2.0, scan_y),
+                pos2(rect.max.x - 2.0, scan_y),
+            ],
             Stroke::new(0.5_f32, Color32::from_rgba_unmultiplied(10, 16, 26, 40)),
         );
         scan_y += scanline_step;
@@ -40,7 +43,10 @@ pub fn draw_oscilloscope(ui: &mut Ui, samples: &[f32], width: f32, height: f32) 
     // Center dashed reticle
     let mut x_ret = rect.min.x + 8.0;
     while x_ret < rect.max.x - 16.0 {
-        painter.line_segment([pos2(x_ret, center_y), pos2(x_ret + 3.0, center_y)], Stroke::new(1.0_f32, grid_color));
+        painter.line_segment(
+            [pos2(x_ret, center_y), pos2(x_ret + 3.0, center_y)],
+            Stroke::new(1.0_f32, grid_color),
+        );
         x_ret += 8.0;
     }
 
@@ -65,7 +71,10 @@ pub fn draw_oscilloscope(ui: &mut Ui, samples: &[f32], width: f32, height: f32) 
 
     let meter_h = ((rect.height() - 14.0) * peak.clamp(0.0, 1.0)).max(3.0);
     painter.line_segment(
-        [pos2(meter_x, rect.max.y - 7.0), pos2(meter_x, rect.max.y - 7.0 - meter_h)],
+        [
+            pos2(meter_x, rect.max.y - 7.0),
+            pos2(meter_x, rect.max.y - 7.0 - meter_h),
+        ],
         Stroke::new(3.0_f32, CyberTheme::NEON_PINK),
     );
 
@@ -83,25 +92,35 @@ pub fn draw_oscilloscope(ui: &mut Ui, samples: &[f32], width: f32, height: f32) 
 
     let points: Vec<Pos2> = if peak > 0.005 && !samples.is_empty() {
         // Live audio trace
-        (0..num_points).map(|i| {
-            let sample_idx = (i * samples.len()) / num_points;
-            let s = samples.get(sample_idx).copied().unwrap_or(0.0);
-            let x = rect.min.x + 8.0 + i as f32 * step_x;
-            let y = center_y - (s * amp_scale).clamp(-rect.height() * 0.44, rect.height() * 0.44);
-            pos2(x, y)
-        }).collect()
+        (0..num_points)
+            .map(|i| {
+                let sample_idx = (i * samples.len()) / num_points;
+                let s = samples.get(sample_idx).copied().unwrap_or(0.0);
+                let x = rect.min.x + 8.0 + i as f32 * step_x;
+                let y =
+                    center_y - (s * amp_scale).clamp(-rect.height() * 0.44, rect.height() * 0.44);
+                pos2(x, y)
+            })
+            .collect()
     } else {
         // Living holographic cyber vector carrier wave (matches new_ui.jpeg vector scope)
-        (0..num_points).map(|i| {
-            let frac = i as f32 / (num_points - 1) as f32;
-            let x = rect.min.x + 8.0 + i as f32 * step_x;
-            let ripple1 = (frac * 14.0 * PI - t * 6.5).sin() * 0.38;
-            let ripple2 = (frac * 26.0 * PI + t * 4.0).sin() * 0.16;
-            let burst = if frac > 0.70 { (frac * 36.0 * PI - t * 12.0).sin() * 0.35 } else { 0.0 };
-            let wave_y = ripple1 + ripple2 + burst;
-            let y = center_y - (wave_y * amp_scale).clamp(-rect.height() * 0.44, rect.height() * 0.44);
-            pos2(x, y)
-        }).collect()
+        (0..num_points)
+            .map(|i| {
+                let frac = i as f32 / (num_points - 1) as f32;
+                let x = rect.min.x + 8.0 + i as f32 * step_x;
+                let ripple1 = (frac * 14.0 * PI - t * 6.5).sin() * 0.38;
+                let ripple2 = (frac * 26.0 * PI + t * 4.0).sin() * 0.16;
+                let burst = if frac > 0.70 {
+                    (frac * 36.0 * PI - t * 12.0).sin() * 0.35
+                } else {
+                    0.0
+                };
+                let wave_y = ripple1 + ripple2 + burst;
+                let y = center_y
+                    - (wave_y * amp_scale).clamp(-rect.height() * 0.44, rect.height() * 0.44);
+                pos2(x, y)
+            })
+            .collect()
     };
 
     // 5. GPU Volumetric Ribbon (Hardware Triangle Mesh)

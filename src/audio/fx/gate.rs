@@ -15,6 +15,7 @@ pub struct TranceGate {
     sample_counter: f32,
     envelope_l: f32,
     envelope_r: f32,
+    smoothed_mix: f32,
     sample_rate: f32,
 }
 
@@ -38,6 +39,7 @@ impl Default for TranceGate {
             sample_counter: 0.0,
             envelope_l: 1.0,
             envelope_r: 1.0,
+            smoothed_mix: 0.0,
             sample_rate: 44100.0,
         }
     }
@@ -53,11 +55,16 @@ impl TranceGate {
         self.sample_counter = 0.0;
         self.envelope_l = 1.0;
         self.envelope_r = 1.0;
+        self.smoothed_mix = 0.0;
     }
 
     #[inline(always)]
     pub fn process_sample(&mut self, in_l: f32, in_r: f32, host_bpm: f32) -> (f32, f32) {
-        if !self.enabled {
+        let target_mix = if self.enabled { 1.0 } else { 0.0 };
+        let coeff = 1.0 - (-1.0 / (0.004 * self.sample_rate)).exp();
+        self.smoothed_mix += (target_mix - self.smoothed_mix) * coeff;
+        if self.smoothed_mix <= 0.0001 && target_mix <= 0.0 {
+            self.smoothed_mix = 0.0;
             return (in_l, in_r);
         }
 
@@ -72,8 +79,16 @@ impl TranceGate {
             self.current_step = (self.current_step + 1) % NUM_GATE_STEPS;
         }
 
-        let target_l = if self.steps_l[self.current_step] { 1.0 } else { 0.0 };
-        let target_r = if self.steps_r[self.current_step] { 1.0 } else { 0.0 };
+        let target_l = if self.steps_l[self.current_step] {
+            1.0
+        } else {
+            0.0
+        };
+        let target_r = if self.steps_r[self.current_step] {
+            1.0
+        } else {
+            0.0
+        };
 
         // Smoothing attack/release
         let sr = self.sample_rate;
@@ -92,6 +107,12 @@ impl TranceGate {
             self.envelope_r = (self.envelope_r - rel_coeff).max(0.0);
         }
 
-        (in_l * self.envelope_l, in_r * self.envelope_r)
+        let wet_l = in_l * self.envelope_l;
+        let wet_r = in_r * self.envelope_r;
+        let mix = self.smoothed_mix.clamp(0.0, 1.0);
+        (
+            in_l * (1.0 - mix) + wet_l * mix,
+            in_r * (1.0 - mix) + wet_r * mix,
+        )
     }
 }

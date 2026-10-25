@@ -58,7 +58,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist_release
-          VERSION="v1.0.1"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="dev-$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          fi
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             # Windows VST3

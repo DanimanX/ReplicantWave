@@ -8,3 +8,6 @@
 *.clap
 *.component
 Cargo.lock
+
+# local codewhale session state
+.codewhale/

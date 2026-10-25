@@ -26,24 +26,85 @@ fn test_sequencer_64_steps_cycling() {
     }
 
     assert!(trigger_count > 10, "Sequencer should trigger steps");
-    assert!(visited_steps.len() > 16, "Sequencer should advance across steps, visited: {}", visited_steps.len());
+    assert!(
+        visited_steps.len() > 16,
+        "Sequencer should advance across steps, visited: {}",
+        visited_steps.len()
+    );
 }
 
 #[test]
-fn test_sequencer_midi_transpose() {
+fn test_midi_notes_never_start_sequencer() {
+    let mut engine = SynthEngine::default();
+    engine.set_sample_rate(44100.0);
+    engine.sequencer.mode = SeqMode::InternalSynth;
+    // Both defaults and KEY TRIG must not turn a MIDI note into a transport start.
+    assert!(!engine.sequencer.key_trigger);
+    assert!(!engine.sequencer.running);
+
+    engine.handle_midi_note_on(60, 0.8);
+    assert!(
+        !engine.sequencer.running,
+        "MIDI note-on must never start the sequencer"
+    );
+    assert!(
+        engine
+            .voices
+            .iter()
+            .any(|v| v.is_active() && v.active_midi_note == 60),
+        "MIDI note-on must play a synth voice"
+    );
+
+    engine.handle_midi_note_off(60);
+
+    // Even with key trigger enabled, a stopped sequencer stays stopped.
+    engine.sequencer.key_trigger = true;
+    engine.handle_midi_note_on(64, 0.8);
+    assert!(
+        !engine.sequencer.running,
+        "KEY TRIG must not start a stopped sequencer"
+    );
+    assert!(
+        engine
+            .voices
+            .iter()
+            .any(|v| v.is_active() && v.active_midi_note == 64),
+        "MIDI note-on must still play the synth when KEY TRIG is armed"
+    );
+}
+
+#[test]
+fn test_midi_transposes_only_a_running_sequencer() {
     let mut engine = SynthEngine::default();
     engine.set_sample_rate(44100.0);
     engine.sequencer.mode = SeqMode::InternalSynth;
     engine.sequencer.key_trigger = true;
+    engine.sequencer.running = true;
 
-    // Simulate MIDI note on (note 60 = C4)
-    engine.handle_midi_note_on(60, 0.8);
-    assert_eq!(engine.sequencer.root_note, 60);
-    assert!(engine.sequencer.running);
-
-    // Simulate MIDI note on (note 72 = C5)
     engine.handle_midi_note_on(72, 0.9);
     assert_eq!(engine.sequencer.root_note, 72);
+    assert!(engine.sequencer.running);
+}
+
+#[test]
+fn test_loading_presets_never_starts_transport() {
+    use replicantwave::presets::factory::get_factory_presets;
+
+    for preset in get_factory_presets() {
+        let mut engine = SynthEngine::default();
+        engine.set_sample_rate(48000.0);
+        preset.apply_to_engine(&mut engine);
+        assert!(
+            !engine.sequencer.running,
+            "preset '{}' started the sequencer on load",
+            preset.name
+        );
+        assert!(
+            engine.sequencer.host_sync == false,
+            "preset '{}' must not force DAW sync on load",
+            preset.name
+        );
+    }
 }
 
 #[test]
@@ -76,8 +137,14 @@ fn test_manual_play_button_toggle() {
             }
         }
     }
-    assert!(produced_audio, "Manual PLAY must produce sound even when host_playing is false!");
-    assert!(engine.sequencer.current_step > 0, "Sequencer step should advance!");
+    assert!(
+        produced_audio,
+        "Manual PLAY must produce sound even when host_playing is false!"
+    );
+    assert!(
+        engine.sequencer.current_step > 0,
+        "Sequencer step should advance!"
+    );
 
     // Simulate clicking STOP button in GUI:
     engine.sequencer.running = false;
@@ -91,7 +158,9 @@ fn test_manual_play_button_toggle() {
     }
 
     // Active voice count should return to 0
-    let active_voices = engine.active_voice_count.load(std::sync::atomic::Ordering::Relaxed);
+    let active_voices = engine
+        .active_voice_count
+        .load(std::sync::atomic::Ordering::Relaxed);
     assert_eq!(active_voices, 0, "All voices must be silenced after STOP!");
 }
 
@@ -116,6 +185,13 @@ fn test_dsp_performance_benchmark() {
     }
 
     let elapsed = start.elapsed();
-    println!("Processed 200 blocks (102,400 samples) across 12 voices in {:?}", elapsed);
-    assert!(elapsed.as_millis() < 250, "DSP processing must be ultra-fast! Elapsed: {:?}", elapsed);
+    println!(
+        "Processed 200 blocks (102,400 samples) across 12 voices in {:?}",
+        elapsed
+    );
+    assert!(
+        elapsed.as_millis() < 250,
+        "DSP processing must be ultra-fast! Elapsed: {:?}",
+        elapsed
+    );
 }

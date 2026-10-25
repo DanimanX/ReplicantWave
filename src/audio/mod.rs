@@ -1,3 +1,4 @@
+pub mod denormal;
 pub mod envelope;
 pub mod filter;
 pub mod fx;
@@ -8,9 +9,9 @@ pub mod voice;
 pub mod wavetable;
 
 use fx::FxChain;
-use step_sequencer::{SeqMode, SeqStepEvent, StepSequencer};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use step_sequencer::{SeqMode, SeqStepEvent, StepSequencer};
 use voice::Voice;
 use wavetable::WavetableBank;
 
@@ -50,6 +51,11 @@ pub struct SynthEngine {
     next_voice_age: u64,
     last_note: u8,
     sample_rate: f32,
+    smoothed_master: f32,
+    dc_x1_l: f32,
+    dc_y1_l: f32,
+    dc_x1_r: f32,
+    dc_y1_r: f32,
 }
 
 impl Default for SynthEngine {
@@ -62,7 +68,7 @@ impl Default for SynthEngine {
             bank,
             sequencer: StepSequencer::default(),
             fx: FxChain::default(),
-            master_gain: 0.8,
+            master_gain: 0.6,
             mono_mode: false,
             legato: false,
             glide_time_s: 0.05,
@@ -74,6 +80,11 @@ impl Default for SynthEngine {
             next_voice_age: 1,
             last_note: 60,
             sample_rate: 44100.0,
+            smoothed_master: 0.6,
+            dc_x1_l: 0.0,
+            dc_y1_l: 0.0,
+            dc_x1_r: 0.0,
+            dc_y1_r: 0.0,
         }
     }
 }
@@ -97,41 +108,42 @@ impl SynthEngine {
         self.held_midi_keys = 0;
         self.last_host_playing = false;
         self.active_voice_count.store(0, Ordering::Relaxed);
+        self.smoothed_master = self.master_gain;
+        self.dc_x1_l = 0.0;
+        self.dc_y1_l = 0.0;
+        self.dc_x1_r = 0.0;
+        self.dc_y1_r = 0.0;
     }
 
-    /// Smart MIDI note on bridging: routes to 64-step sequencer transposition
-    /// or normal polyphonic synth voices cleanly without conflicts.
+    /// MIDI note on.
+    ///
+    /// The internal sequencer is *never* started by incoming MIDI. Notes play
+    /// polyphonically. When the sequencer is already running and KEY TRIG is
+    /// enabled, notes transpose its root instead (classic 303 behaviour).
     pub fn handle_midi_note_on(&mut self, note: u8, vel: f32) {
-        self.held_midi_keys += 1;
-        if self.sequencer.is_active_for_synth() {
-            // Transpose sequencer pattern to the pressed MIDI key
+        self.held_midi_keys = self.held_midi_keys.saturating_add(1);
+        if self.sequencer.is_active_for_synth() && self.sequencer.key_trigger {
             self.sequencer.set_root_note(note);
-            if self.sequencer.key_trigger {
-                self.sequencer.running = true;
-                self.sequencer.reset();
-            }
         } else {
             self.note_on(note, vel);
         }
     }
 
-    /// Smart MIDI note off bridging.
+    /// MIDI note off: only releases notes that were played directly, never
+    /// stops a manually or host-synchronised sequencer.
     pub fn handle_midi_note_off(&mut self, note: u8) {
         self.held_midi_keys = self.held_midi_keys.saturating_sub(1);
-        if self.sequencer.is_active_for_synth() {
-            if self.sequencer.key_trigger
-                && !self.sequencer.latch
-                && self.held_midi_keys == 0
-                && !self.sequencer.host_sync
-            {
-                self.sequencer.running = false;
-                for v in self.voices.iter_mut() {
-                    v.note_off();
-                }
-            }
-        } else {
+        if !(self.sequencer.is_active_for_synth() && self.sequencer.key_trigger) {
             self.note_off(note);
         }
+    }
+
+    /// Immediately release every sounding voice (used by the STOP button).
+    pub fn stop_all_notes(&mut self) {
+        for v in self.voices.iter_mut() {
+            v.note_off();
+        }
+        self.held_midi_keys = 0;
     }
 
     pub fn note_on(&mut self, note: u8, vel: f32) {
@@ -157,21 +169,28 @@ impl SynthEngine {
             }
         }
 
-        // 2. If all active, steal voice in release stage with lowest level
+        // 2. If all voices are busy, steal the quietest one. Released tails are
+        //    preferred automatically because their amplitude is already falling.
         if target_idx.is_none() {
-            let mut oldest_age = u64::MAX;
-            let mut oldest_idx = 0;
+            let mut quietest_level = f32::MAX;
+            let mut quietest_idx = 0;
             for (i, v) in self.voices.iter().enumerate() {
-                if v.age < oldest_age {
-                    oldest_age = v.age;
-                    oldest_idx = i;
+                let level = v.current_amp_level();
+                if level < quietest_level {
+                    quietest_level = level;
+                    quietest_idx = i;
                 }
             }
-            target_idx = Some(oldest_idx);
+            target_idx = Some(quietest_idx);
         }
 
         let idx = target_idx.unwrap_or(0);
-        self.voices[idx].note_on(note, vel, false, 0.0, age_id);
+        if self.voices[idx].is_active() {
+            // Deferred, faded steal instead of an abrupt phase/envelope jump.
+            self.voices[idx].steal_to(note, vel, age_id);
+        } else {
+            self.voices[idx].note_on(note, vel, false, 0.0, age_id);
+        }
         self.last_note = note;
     }
 
@@ -235,6 +254,13 @@ impl SynthEngine {
 
         let mut active_count = 0;
 
+        // Block-rate smoothing coefficient for the master volume (10 ms).
+        // Prevents zipper noise when the MASTER knob or a preset is changed.
+        let master_coeff = 1.0 - (-1.0 / (0.01 * self.sample_rate)).exp();
+        // ~35 Hz one-pole DC blocker after the FX chain (asymmetric drive and
+        // wavefolding can otherwise leave a DC offset that eats headroom).
+        let dc_coeff = 0.995_f32;
+
         for i in 0..num_samples {
             // Check Step Sequencer trigger with full host DAW & standalone bridging
             match self.sequencer.process_sample(host_bpm, host_playing) {
@@ -245,7 +271,11 @@ impl SynthEngine {
                     accent,
                 } => {
                     if self.sequencer.mode == SeqMode::InternalSynth {
-                        let final_vel = if accent { (velocity * 1.3).min(1.0) } else { velocity };
+                        let final_vel = if accent {
+                            (velocity * 1.3).min(1.0)
+                        } else {
+                            velocity
+                        };
                         if slide {
                             self.legato_glide(note, final_vel);
                         } else {
@@ -281,7 +311,12 @@ impl SynthEngine {
             for v in self.voices.iter_mut() {
                 if v.is_active() {
                     active_voices += 1;
-                    let (vl, vr) = v.process_sample(&self.bank, host_bpm, self.pitch_bend_semitones, extra_cutoff);
+                    let (vl, vr) = v.process_sample(
+                        &self.bank,
+                        host_bpm,
+                        self.pitch_bend_semitones,
+                        extra_cutoff,
+                    );
                     mix_l += vl;
                     mix_r += vr;
                 }
@@ -292,15 +327,25 @@ impl SynthEngine {
             // Apply global FX chain
             let (fx_l, fx_r) = self.fx.process_sample(mix_l, mix_r, host_bpm);
 
-            // Master volume & safety soft clipper
-            let final_l = soft_clip(fx_l * self.master_gain);
-            let final_r = soft_clip(fx_r * self.master_gain);
+            // DC blocker
+            let dc_l = fx_l - self.dc_x1_l + dc_coeff * self.dc_y1_l;
+            self.dc_x1_l = fx_l;
+            self.dc_y1_l = dc_l;
+            let dc_r = fx_r - self.dc_x1_r + dc_coeff * self.dc_y1_r;
+            self.dc_x1_r = fx_r;
+            self.dc_y1_r = dc_r;
+
+            // Smoothed master volume & continuous soft saturation
+            self.smoothed_master += (self.master_gain - self.smoothed_master) * master_coeff;
+            let final_l = soft_clip(dc_l * self.smoothed_master);
+            let final_r = soft_clip(dc_r * self.smoothed_master);
 
             out_left[i] = final_l;
             out_right[i] = final_r;
         }
 
-        self.active_voice_count.store(active_count, Ordering::Relaxed);
+        self.active_voice_count
+            .store(active_count, Ordering::Relaxed);
 
         // Push to oscilloscope buffer ONCE per block without locking inside sample loop
         if let Some(mut scope) = self.scope_data.try_lock() {
@@ -318,11 +363,15 @@ impl SynthEngine {
 
 #[inline(always)]
 fn soft_clip(x: f32) -> f32 {
-    if x > 1.0 {
-        1.0
-    } else if x < -1.0 {
-        -1.0
+    // Continuous tanh-style saturator (Padé approximation). Unlike the old
+    // cubic + hard-limit version this has no discontinuity at |x| = 1, which
+    // was the source of audible crackle on every loud transient.
+    const LIMIT: f32 = 3.0;
+    let ax = x.abs();
+    if ax >= LIMIT {
+        x.signum()
     } else {
-        x - (x * x * x) * (1.0 / 3.0)
+        let x2 = x * x;
+        (x * (27.0 + x2) / (27.0 + 9.0 * x2)).clamp(-1.0, 1.0)
     }
 }

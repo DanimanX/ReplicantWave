@@ -1,6 +1,6 @@
 [package]
 name = "replicantwave"
-version = "1.0.5"
+version = "1.1.0"
 edition = "2021"
 authors = ["Daniel Rojas <daniel.rojas@chileatiende.cl>"]
 description = "ReplicantWave - Cyberpunk Wavetable Synthesizer with 64-Step Sequencer (VST3, CLAP, AU, Standalone)"

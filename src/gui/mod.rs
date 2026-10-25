@@ -1,4 +1,11 @@
+//! NIGHT CITY HUD — radical cyberpunk editor for ReplicantWave.
+//!
+//! Layout: HUD header, preset bank strip, 2x2 synth grid + control deck, and a
+//! full-width 64-step neon matrix. Painting uses a detached `UiModel` snapshot;
+//! the engine mutex is only touched for microseconds at preset load/apply time.
+
 pub mod knob;
+pub mod model;
 pub mod oscilloscope;
 pub mod sequencer_view;
 pub mod theme;
@@ -6,680 +13,1365 @@ pub mod wavetable_view;
 
 use crate::audio::filter::FilterType;
 use crate::audio::fx::distortion::DistortionMode;
+use crate::audio::oscillator::NoiseType;
 use crate::audio::SynthEngine;
 use crate::presets::factory::get_factory_presets;
 use crate::presets::SynthPreset;
 use knob::{draw_rotary_knob, draw_rotary_knob_log, draw_rotary_knob_usize};
+use model::{EnvUi, FxUi, OscUi, UiModel};
 use oscilloscope::draw_oscilloscope;
-use sequencer_view::{draw_sequencer_drawer, SequencerUiState};
+use sequencer_view::{draw_sequencer_deck, SequencerUiState};
 use theme::CyberTheme;
-use wavetable_view::draw_wavetable_preview;
+use wavetable_view::{draw_wavetable_preview, WaveThumb};
 
 use nih_plug_egui::egui::{
-    pos2, Button, Color32, ComboBox, Pos2, RichText, Sense, Stroke, StrokeKind, Ui, Vec2,
+    pos2, vec2, Align, Button, Color32, ComboBox, Layout, Pos2, Rect, Response, RichText, Sense,
+    Stroke, StrokeKind, Ui, UiBuilder,
 };
 use parking_lot::Mutex;
 use std::f32::consts::PI;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub const DONATION_URL: &str = "https://paypal.me/DanimanX?locale.x=en_US&country.x=CL";
 
+const CATEGORIES: [&str; 9] = [
+    "ALL", "BASS", "PAD", "DRONE", "LEAD", "ARP", "SEQ", "FX", "OTHER",
+];
+
 pub struct GuiSharedState {
     pub engine: Arc<Mutex<SynthEngine>>,
-    pub seq_ui_state: SequencerUiState,
+    pub scope: Arc<Mutex<crate::audio::ScopeBuffer>>,
+    pub active_voices: Arc<AtomicUsize>,
+    pub model: UiModel,
     pub presets: Vec<SynthPreset>,
     pub current_preset_idx: usize,
+    pub pending_preset: Option<usize>,
+    pub wave_thumbs: Vec<WaveThumb>,
+    pub wave_names: Vec<String>,
+    pub seq_ui_state: SequencerUiState,
+    pub category: usize,
+    pub live_step: usize,
 }
 
 impl GuiSharedState {
     pub fn new(engine: Arc<Mutex<SynthEngine>>) -> Self {
         let presets = get_factory_presets();
+        let (model, scope, active_voices, wave_thumbs, wave_names) = {
+            let mut guard = engine.lock();
+            // Start on the first factory preset instead of the bare defaults.
+            if let Some(p) = presets.first() {
+                p.apply_to_engine(&mut guard);
+            }
+            let thumbs = guard
+                .bank
+                .tables
+                .iter()
+                .map(WaveThumb::from_wavetable)
+                .collect();
+            (
+                UiModel::capture(&guard),
+                guard.scope_data.clone(),
+                guard.active_voice_count.clone(),
+                thumbs,
+                guard.bank.names(),
+            )
+        };
+
         Self {
             engine,
-            seq_ui_state: SequencerUiState::default(),
+            scope,
+            active_voices,
+            model,
             presets,
             current_preset_idx: 0,
+            pending_preset: None,
+            wave_thumbs,
+            wave_names,
+            seq_ui_state: SequencerUiState::default(),
+            category: 0,
+            live_step: 0,
         }
+    }
+
+    fn queue_preset(&mut self, idx: usize) {
+        if idx < self.presets.len() {
+            self.current_preset_idx = idx;
+            self.pending_preset = Some(idx);
+        }
+    }
+
+    fn filtered_presets(&self) -> Vec<usize> {
+        if self.category == 0 {
+            return (0..self.presets.len()).collect();
+        }
+        let group = CATEGORIES[self.category];
+        (0..self.presets.len())
+            .filter(|&i| preset_group(&self.presets[i].category) == group)
+            .collect()
     }
 }
 
 pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
-    // Request continuous GPU repaint for 60 FPS smooth animations
-    ui.ctx().request_repaint();
-
-    ui.style_mut().visuals.panel_fill = CyberTheme::BG_VOID;
-    ui.style_mut().visuals.window_fill = CyberTheme::BG_VOID;
-
-    // Draw background chassis textures (cooling vents, IC 808 chip, telemetry codes, red stamp)
-    let full_rect = ui.available_rect_before_wrap();
-    CyberTheme::draw_chassis_decorations(ui.painter(), full_rect);
-
-    let mut engine_guard = state.engine.lock();
-    let engine = &mut *engine_guard;
-
-    ui.vertical(|ui| {
-        // =========================================================================
-        // 1. TOP HEADER: LOGO, PRESETS, TELEMETRY, MASTER, DONATE (Matches new_ui.jpeg)
-        // =========================================================================
-        ui.horizontal(|ui| {
-            // Cyberpunk Logo
-            ui.label(
-                RichText::new("⚡ REPLICANTWAVE ⚡")
-                    .color(CyberTheme::NEON_CYAN)
-                    .strong()
-                    .size(15.5),
-            );
-            ui.label(
-                RichText::new("// CYBERPUNK SYNTH")
-                    .color(CyberTheme::TEXT_MUTED)
-                    .size(10.0),
-            );
-
-            ui.add_space(8.0);
-
-            // Preset Selector with Cyan Arrows and Amber Name Box
-            if ui.button(RichText::new("◀").color(CyberTheme::NEON_CYAN).strong()).clicked() {
-                if state.current_preset_idx > 0 {
-                    state.current_preset_idx -= 1;
-                } else {
-                    state.current_preset_idx = state.presets.len() - 1;
-                }
-                state.presets[state.current_preset_idx].apply_to_engine(engine);
-            }
-
-            let cur_name = state.presets[state.current_preset_idx].name.clone();
-            ComboBox::from_id_salt("preset_combo")
-                .selected_text(RichText::new(&cur_name).color(CyberTheme::NEON_AMBER).strong())
-                .width(180.0)
-                .show_ui(ui, |ui| {
-                    for (i, p) in state.presets.iter().enumerate() {
-                        let text = format!("[{}] {}", p.category, p.name);
-                        let _is_sel = state.current_preset_idx == i;
-                        if ui.selectable_value(&mut state.current_preset_idx, i, text).clicked() {
-                            state.presets[i].apply_to_engine(engine);
-                        }
-                    }
-                });
-
-            if ui.button(RichText::new("▶").color(CyberTheme::NEON_CYAN).strong()).clicked() {
-                state.current_preset_idx = (state.current_preset_idx + 1) % state.presets.len();
-                state.presets[state.current_preset_idx].apply_to_engine(engine);
-            }
-
-            ui.add_space(12.0);
-
-            // Live Telemetry Readout: VOICES: 12/16 | DSP: 64-BIT (Green monospace)
-            let active_voices = engine.active_voice_count.load(Ordering::Relaxed);
-            ui.label(
-                RichText::new(format!("VOICES: {:02}/16 | DSP: 64-BIT", active_voices))
-                    .color(CyberTheme::NEON_LIME)
-                    .strong()
-                    .size(11.0),
-            );
-
-            ui.add_space(10.0);
-
-            // Master Volume Analog Rotary Knob
-            draw_rotary_knob(ui, &mut engine.master_gain, 0.0..=1.5, "MASTER", CyberTheme::NEON_AMBER);
-
-            ui.add_space(10.0);
-
-            // Donation Button: ☕ DONATE / BUY ME A COFFEE (Golden Amber pill button)
-            let donate_btn = Button::new(
-                RichText::new("☕ DONATE / BUY ME A COFFEE")
-                    .color(Color32::from_rgb(10, 11, 16))
-                    .strong()
-                    .size(11.0),
-            )
-            .fill(CyberTheme::NEON_AMBER)
-            .stroke(Stroke::new(1.5_f32, Color32::WHITE));
-
-            if ui.add(donate_btn).clicked() {
-                let _ = open::that(DONATION_URL);
-            }
-
-            // Top-right industrial telemetry readout stamp
-            ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new("EATA:    0.5000006\nERROS:        0.00\nEXTFA:    01003100\nHAGINZS:      9.56")
-                        .color(Color32::from_rgb(72, 85, 112))
-                        .size(8.0)
-                        .monospace(),
-                );
-            });
-        });
-
-        ui.add_space(4.0);
-        ui.separator();
-
-        // Modular patch cable connector coordinates
-        let mut osc1_detune_jack: Option<Pos2> = None;
-        let mut osc1_bend_jack: Option<Pos2> = None;
-        let mut osc2_bend_jack: Option<Pos2> = None;
-
-        let mut cable_dest_1: Option<Pos2> = None;
-        let mut cable_dest_2: Option<Pos2> = None;
-        let mut cable_dest_3: Option<Pos2> = None;
-
-        // =========================================================================
-        // 2. MAIN DSP SYNTH PANELS (3 Columns matching new_ui.jpeg)
-        // =========================================================================
-        let col_w = 394.0;
-        let col_mid_w = 426.0;
-
-        ui.horizontal(|ui| {
-            // ---------------------------------------------------------------------
-            // COLUMN 1: OSCILLATORS (OSC 1 & OSC 2)
-            // ---------------------------------------------------------------------
-            let osc_resp = ui.group(|ui| {
-                ui.set_width(col_w);
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚡ OSCILLATORS").color(CyberTheme::NEON_CYAN).strong().size(12.0));
-                        ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
-                            ui.label(RichText::new("05M/ASEC//12AS05T").color(CyberTheme::TEXT_DIM).monospace().size(8.0));
-                        });
-                    });
-
-                    // --- OSC 1 ---
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut engine.voices[0].osc1.enabled, "");
-                            ui.label(RichText::new("OSC 1:").color(CyberTheme::NEON_CYAN).strong());
-
-                            // Wavetable Selector
-                            let table_names = engine.bank.names();
-                            let mut cur_table = engine.voices[0].osc1_table_idx;
-                            ComboBox::from_id_salt("osc1_table_combo")
-                                .selected_text(table_names.get(cur_table).cloned().unwrap_or_default())
-                                .width(125.0)
-                                .show_ui(ui, |ui| {
-                                    for (i, name) in table_names.iter().enumerate() {
-                                        if ui.selectable_value(&mut cur_table, i, name).clicked() {
-                                            for v in engine.voices.iter_mut() {
-                                                v.osc1_table_idx = cur_table;
-                                            }
-                                        }
-                                    }
-                                });
-
-                            ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
-                                ui.label(RichText::new("C001/0002/ // 165057.KE").color(CyberTheme::TEXT_DIM).monospace().size(7.5));
-                            });
-                        });
-
-                        // 3D GPU Holographic Wavetable Preview (Cyan)
-                        let cur_wt1 = engine.bank.get_table(engine.voices[0].osc1_table_idx);
-                        let cur_pos1 = engine.voices[0].osc1.position;
-                        draw_wavetable_preview(ui, cur_wt1, cur_pos1, CyberTheme::NEON_CYAN, col_w - 24.0, 74.0);
-
-                        // Row 1: POS, TUNE, UNISON, DETUNE + Jack
-                        ui.horizontal(|ui| {
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.position, 0.0..=1.0, "POS", CyberTheme::NEON_CYAN).changed() {
-                                let val = engine.voices[0].osc1.position;
-                                for v in engine.voices.iter_mut() { v.osc1.position = val; }
-                            }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.tune_semitones, -36.0..=36.0, "TUNE", CyberTheme::NEON_CYAN).changed() {
-                                let val = engine.voices[0].osc1.tune_semitones;
-                                for v in engine.voices.iter_mut() { v.osc1.tune_semitones = val; }
-                            }
-                            if draw_rotary_knob_usize(ui, &mut engine.voices[0].osc1.unison, 1..=8, "UNISON", CyberTheme::NEON_CYAN).changed() {
-                                let val = engine.voices[0].osc1.unison;
-                                for v in engine.voices.iter_mut() { v.osc1.unison = val; }
-                            }
-                            let det_resp = draw_rotary_knob(ui, &mut engine.voices[0].osc1.detune, 0.0..=1.0, "DETUNE", CyberTheme::NEON_CYAN);
-                            if det_resp.changed() {
-                                let val = engine.voices[0].osc1.detune;
-                                for v in engine.voices.iter_mut() { v.osc1.detune = val; }
-                            }
-                            osc1_detune_jack = Some(pos2(det_resp.rect.max.x + 8.0, det_resp.rect.center().y));
-                        });
-
-                        // Row 2: LEVEL, SPREAD, FORMANT, BEND + Jack
-                        ui.horizontal(|ui| {
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.level_gain, 0.0..=1.5, "LEVEL", CyberTheme::NEON_CYAN).changed() {
-                                let val = engine.voices[0].osc1.level_gain;
-                                for v in engine.voices.iter_mut() { v.osc1.level_gain = val; }
-                            }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.spread, 0.0..=1.0, "SPREAD", CyberTheme::NEON_CYAN).changed() {
-                                let val = engine.voices[0].osc1.spread;
-                                for v in engine.voices.iter_mut() { v.osc1.spread = val; }
-                            }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc1.formant, -1.0..=1.0, "FORMANT", CyberTheme::NEON_CYAN).changed() {
-                                let val = engine.voices[0].osc1.formant;
-                                for v in engine.voices.iter_mut() { v.osc1.formant = val; }
-                            }
-                            let bend_resp = draw_rotary_knob(ui, &mut engine.voices[0].osc1.bend, -1.0..=1.0, "BEND", CyberTheme::NEON_CYAN);
-                            if bend_resp.changed() {
-                                let val = engine.voices[0].osc1.bend;
-                                for v in engine.voices.iter_mut() { v.osc1.bend = val; }
-                            }
-                            osc1_bend_jack = Some(pos2(bend_resp.rect.max.x + 8.0, bend_resp.rect.center().y));
-                        });
-                    });
-
-                    ui.add_space(2.0);
-
-                    // --- OSC 2 ---
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut engine.voices[0].osc2.enabled, "");
-                            ui.label(RichText::new("OSC 2:").color(CyberTheme::NEON_PINK).strong());
-
-                            // Wavetable Selector
-                            let table_names = engine.bank.names();
-                            let mut cur_table = engine.voices[0].osc2_table_idx;
-                            ComboBox::from_id_salt("osc2_table_combo")
-                                .selected_text(table_names.get(cur_table).cloned().unwrap_or_default())
-                                .width(125.0)
-                                .show_ui(ui, |ui| {
-                                    for (i, name) in table_names.iter().enumerate() {
-                                        if ui.selectable_value(&mut cur_table, i, name).clicked() {
-                                            for v in engine.voices.iter_mut() {
-                                                v.osc2_table_idx = cur_table;
-                                            }
-                                        }
-                                    }
-                                });
-
-                            ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
-                                ui.label(RichText::new("CQ916139 COG 26.918").color(CyberTheme::TEXT_DIM).monospace().size(7.5));
-                            });
-                        });
-
-                        // 3D GPU Holographic Wavetable Preview (Hot Pink / Magenta)
-                        let cur_wt2 = engine.bank.get_table(engine.voices[0].osc2_table_idx);
-                        let cur_pos2 = engine.voices[0].osc2.position;
-                        draw_wavetable_preview(ui, cur_wt2, cur_pos2, CyberTheme::NEON_PINK, col_w - 24.0, 74.0);
-
-                        // Row 1: POS, TUNE, UNISON, DETUNE
-                        ui.horizontal(|ui| {
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.position, 0.0..=1.0, "POS", CyberTheme::NEON_PINK).changed() {
-                                let val = engine.voices[0].osc2.position;
-                                for v in engine.voices.iter_mut() { v.osc2.position = val; }
-                            }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.tune_semitones, -36.0..=36.0, "TUNE", CyberTheme::NEON_PINK).changed() {
-                                let val = engine.voices[0].osc2.tune_semitones;
-                                for v in engine.voices.iter_mut() { v.osc2.tune_semitones = val; }
-                            }
-                            if draw_rotary_knob_usize(ui, &mut engine.voices[0].osc2.unison, 1..=8, "UNISON", CyberTheme::NEON_PINK).changed() {
-                                let val = engine.voices[0].osc2.unison;
-                                for v in engine.voices.iter_mut() { v.osc2.unison = val; }
-                            }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.detune, 0.0..=1.0, "DETUNE", CyberTheme::NEON_PINK).changed() {
-                                let val = engine.voices[0].osc2.detune;
-                                for v in engine.voices.iter_mut() { v.osc2.detune = val; }
-                            }
-                        });
-
-                        // Row 2: LEVEL, SPREAD, FORMANT, BEND + Jack
-                        ui.horizontal(|ui| {
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.level_gain, 0.0..=1.5, "LEVEL", CyberTheme::NEON_PINK).changed() {
-                                let val = engine.voices[0].osc2.level_gain;
-                                for v in engine.voices.iter_mut() { v.osc2.level_gain = val; }
-                            }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.spread, 0.0..=1.0, "SPREAD", CyberTheme::NEON_PINK).changed() {
-                                let val = engine.voices[0].osc2.spread;
-                                for v in engine.voices.iter_mut() { v.osc2.spread = val; }
-                            }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].osc2.formant, -1.0..=1.0, "FORMANT", CyberTheme::NEON_PINK).changed() {
-                                let val = engine.voices[0].osc2.formant;
-                                for v in engine.voices.iter_mut() { v.osc2.formant = val; }
-                            }
-                            let bend_resp2 = draw_rotary_knob(ui, &mut engine.voices[0].osc2.bend, -1.0..=1.0, "BEND", CyberTheme::NEON_PINK);
-                            if bend_resp2.changed() {
-                                let val = engine.voices[0].osc2.bend;
-                                for v in engine.voices.iter_mut() { v.osc2.bend = val; }
-                            }
-                            osc2_bend_jack = Some(pos2(bend_resp2.rect.max.x + 8.0, bend_resp2.rect.center().y));
-                        });
-                    });
-                });
-            });
-
-            CyberTheme::draw_eurorack_screws(ui.painter(), osc_resp.response.rect);
-
-            ui.add_space(6.0);
-
-            // ---------------------------------------------------------------------
-            // COLUMN 2: NEON OSCILLOSCOPE, MULTIMODE FILTER, SUB & NOISE
-            // ---------------------------------------------------------------------
-            let center_resp = ui.group(|ui| {
-                ui.set_width(col_mid_w);
-                ui.vertical(|ui| {
-                    // Title: ⚡ NEON OSCILLOSCOPE
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚡ NEON OSCILLOSCOPE").color(CyberTheme::NEON_CYAN).strong().size(12.0));
-                        ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
-                            ui.label(RichText::new("DEP VECTOR // 64-BIT").color(CyberTheme::TEXT_DIM).monospace().size(8.0));
-                        });
-                    });
-
-                    // Live Oscilloscope Visualizer
-                    let samples: Vec<f32> = {
-                        let scope = engine.scope_data.lock();
-                        scope.buffer.to_vec()
-                    };
-                    draw_oscilloscope(ui, &samples, col_mid_w - 24.0, 78.0);
-
-                    ui.add_space(4.0);
-
-                    // Multimode Filter Sub-panel
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut engine.voices[0].filter.enabled, "");
-                            ui.label(RichText::new("MULTIMODE FILTER").color(CyberTheme::NEON_AMBER).strong());
-
-                            let f_types = ["LP 12", "LP 24", "HP 12", "HP 24", "BP 12", "BP 24", "NOTCH"];
-                            let mut cur_type = match engine.voices[0].filter.filter_type {
-                                FilterType::LowPass12 => 0,
-                                FilterType::LowPass24 => 1,
-                                FilterType::HighPass12 => 2,
-                                FilterType::HighPass24 => 3,
-                                FilterType::BandPass12 => 4,
-                                FilterType::BandPass24 => 5,
-                                FilterType::Notch => 6,
-                            };
-
-                            ComboBox::from_id_salt("flt_type_combo")
-                                .selected_text(f_types[cur_type])
-                                .width(88.0)
-                                .show_ui(ui, |ui| {
-                                    for (i, &name) in f_types.iter().enumerate() {
-                                        if ui.selectable_value(&mut cur_type, i, name).clicked() {
-                                            let ft = FilterType::from_index(cur_type);
-                                            for v in engine.voices.iter_mut() { v.filter.filter_type = ft; }
-                                        }
-                                    }
-                                });
-
-                            ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
-                                ui.label(RichText::new("DULT1SXRT BS8TR RE 1:CIRA\nDONTOPEL COLCIP8 DATUHM").color(Color32::from_rgb(0, 180, 120)).monospace().size(6.8));
-                            });
-                        });
-
-                        // Filter Knobs: CUTOFF, RESO, DRIVE, ENV MOD
-                        ui.horizontal(|ui| {
-                            let cut_resp = draw_rotary_knob_log(ui, &mut engine.voices[0].filter.cutoff_hz, 20.0..=18000.0, "CUTOFF", CyberTheme::NEON_AMBER);
-                            if cut_resp.changed() {
-                                let val = engine.voices[0].filter.cutoff_hz;
-                                for v in engine.voices.iter_mut() { v.filter.cutoff_hz = val; }
-                            }
-                            cable_dest_1 = Some(pos2(cut_resp.rect.min.x - 6.0, cut_resp.rect.center().y));
-
-                            if draw_rotary_knob(ui, &mut engine.voices[0].filter.resonance, 0.0..=1.0, "RESO", CyberTheme::NEON_AMBER).changed() {
-                                let val = engine.voices[0].filter.resonance;
-                                for v in engine.voices.iter_mut() { v.filter.resonance = val; }
-                            }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].filter.drive, 1.0..=4.0, "DRIVE", CyberTheme::NEON_CYAN).changed() {
-                                let val = engine.voices[0].filter.drive;
-                                for v in engine.voices.iter_mut() { v.filter.drive = val; }
-                            }
-                            let env_resp = draw_rotary_knob(ui, &mut engine.voices[0].filter.env_amount, -1.0..=1.0, "ENV MOD", CyberTheme::NEON_AMBER);
-                            if env_resp.changed() {
-                                let val = engine.voices[0].filter.env_amount;
-                                for v in engine.voices.iter_mut() { v.filter.env_amount = val; }
-                            }
-                            cable_dest_2 = Some(pos2(env_resp.rect.max.x + 8.0, env_resp.rect.center().y));
-                        });
-
-                        // Route Checkboxes: ROUTE: ☑ OSC1  ☑ OSC2  ☑ SUB
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("ROUTE:").color(CyberTheme::TEXT_MUTED).size(10.0));
-                            if ui.checkbox(&mut engine.voices[0].filter.route_osc1, "OSC1").changed() {
-                                let b = engine.voices[0].filter.route_osc1;
-                                for v in engine.voices.iter_mut() { v.filter.route_osc1 = b; }
-                            }
-                            if ui.checkbox(&mut engine.voices[0].filter.route_osc2, "OSC2").changed() {
-                                let b = engine.voices[0].filter.route_osc2;
-                                for v in engine.voices.iter_mut() { v.filter.route_osc2 = b; }
-                            }
-                            if ui.checkbox(&mut engine.voices[0].filter.route_sub, "SUB").changed() {
-                                let b = engine.voices[0].filter.route_sub;
-                                for v in engine.voices.iter_mut() { v.filter.route_sub = b; }
-                            }
-                        });
-                    });
-
-                    ui.add_space(4.0);
-
-                    // Sub Oscillator & Noise Sub-panel
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut engine.voices[0].sub.enabled, "");
-                            ui.label(RichText::new("SUB OSC:").color(CyberTheme::NEON_LIME).strong().size(11.0));
-                            let sub_resp = draw_rotary_knob(ui, &mut engine.voices[0].sub.level_gain, 0.0..=1.0, "SUB LVL", CyberTheme::NEON_LIME);
-                            if sub_resp.changed() {
-                                let val = engine.voices[0].sub.level_gain;
-                                for v in engine.voices.iter_mut() { v.sub.level_gain = val; }
-                            }
-                            cable_dest_3 = Some(pos2(sub_resp.rect.min.x - 6.0, sub_resp.rect.center().y));
-
-                            ui.add_space(14.0);
-
-                            ui.checkbox(&mut engine.voices[0].noise.enabled, "");
-                            ui.label(RichText::new("NOISE:").color(CyberTheme::TEXT_MUTED).strong().size(11.0));
-                            if draw_rotary_knob(ui, &mut engine.voices[0].noise.level_gain, 0.0..=1.0, "NOISE LVL", CyberTheme::NEON_CYAN).changed() {
-                                let val = engine.voices[0].noise.level_gain;
-                                for v in engine.voices.iter_mut() { v.noise.level_gain = val; }
-                            }
-                        });
-
-                        ui.label(RichText::new("00000000800000056").color(Color32::from_rgb(180, 150, 40)).monospace().size(7.0));
-                    });
-                });
-            });
-
-            CyberTheme::draw_eurorack_screws(ui.painter(), center_resp.response.rect);
-
-            ui.add_space(6.0);
-
-            // ---------------------------------------------------------------------
-            // COLUMN 3: MODULATION & FX (ADSR Envelope & FX Processors)
-            // ---------------------------------------------------------------------
-            let fx_resp = ui.group(|ui| {
-                ui.set_width(col_w);
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚡ MODULATION & FX").color(CyberTheme::NEON_PURPLE).strong().size(12.0));
-                        ui.with_layout(nih_plug_egui::egui::Layout::right_to_left(nih_plug_egui::egui::Align::Center), |ui| {
-                            ui.label(RichText::new("CRFSCIOENITATION FORSING\n6EHOHE1.E9 TIL").color(Color32::from_rgb(220, 50, 70)).monospace().size(6.8));
-                        });
-                    });
-
-                    // Amp ADSR Envelope
-                    ui.group(|ui| {
-                        ui.label(RichText::new("AMP ADSR ENVELOPE").color(CyberTheme::TEXT_PRIMARY).strong().size(11.0));
-                        ui.horizontal(|ui| {
-                            if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.attack_s, 0.001..=5.0, "ATTACK", CyberTheme::NEON_PURPLE).changed() {
-                                let val = engine.voices[0].amp_env.attack_s;
-                                for v in engine.voices.iter_mut() { v.amp_env.attack_s = val; }
-                            }
-                            if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.decay_s, 0.01..=5.0, "DECAY", CyberTheme::NEON_PURPLE).changed() {
-                                let val = engine.voices[0].amp_env.decay_s;
-                                for v in engine.voices.iter_mut() { v.amp_env.decay_s = val; }
-                            }
-                            if draw_rotary_knob(ui, &mut engine.voices[0].amp_env.sustain_level, 0.0..=1.0, "SUSTAIN", CyberTheme::NEON_PURPLE).changed() {
-                                let val = engine.voices[0].amp_env.sustain_level;
-                                for v in engine.voices.iter_mut() { v.amp_env.sustain_level = val; }
-                            }
-                            if draw_rotary_knob_log(ui, &mut engine.voices[0].amp_env.release_s, 0.01..=5.0, "RELEASE", CyberTheme::NEON_PURPLE).changed() {
-                                let val = engine.voices[0].amp_env.release_s;
-                                for v in engine.voices.iter_mut() { v.amp_env.release_s = val; }
-                            }
-                        });
-                    });
-
-                    ui.add_space(2.0);
-
-                    // FX Processors
-                    ui.group(|ui| {
-                        ui.label(RichText::new("FX PROCESSORS").color(CyberTheme::NEON_CYAN).strong().size(11.0));
-
-                        // 1. Distortion (Magenta)
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut engine.fx.distortion.enabled, "");
-                            ui.label(RichText::new("DIST:").size(10.5).color(CyberTheme::NEON_PINK).strong());
-
-                            let dist_modes = ["OVERDRIVE", "CRUSHER", "FIRE", "GRIND"];
-                            let mut cur_dm = match engine.fx.distortion.mode {
-                                DistortionMode::SoftOverdrive => 0,
-                                DistortionMode::BitCrusher => 1,
-                                DistortionMode::FireAmp => 2,
-                                DistortionMode::GrindAmp => 3,
-                            };
-                            ComboBox::from_id_salt("dist_mode_combo")
-                                .selected_text(dist_modes[cur_dm])
-                                .width(94.0)
-                                .show_ui(ui, |ui| {
-                                    for (i, &name) in dist_modes.iter().enumerate() {
-                                        if ui.selectable_value(&mut cur_dm, i, name).clicked() {
-                                            engine.fx.distortion.mode = DistortionMode::from_index(cur_dm);
-                                        }
-                                    }
-                                });
-
-                            draw_rotary_knob(ui, &mut engine.fx.distortion.amount, 0.0..=1.0, "DRIVE", CyberTheme::NEON_PINK);
-                            draw_mini_fx_monitor(ui, 0, CyberTheme::NEON_PINK, engine.fx.distortion.enabled);
-                        });
-
-                        // 2. Chorus (Cyan)
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut engine.fx.chorus.enabled, "");
-                            ui.label(RichText::new("CHORUS:").size(10.5).color(CyberTheme::NEON_CYAN).strong());
-                            draw_rotary_knob(ui, &mut engine.fx.chorus.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_CYAN);
-                            draw_rotary_knob(ui, &mut engine.fx.chorus.rate_hz, 0.1..=8.0, "RATE", CyberTheme::NEON_CYAN);
-                            draw_mini_fx_monitor(ui, 1, CyberTheme::NEON_CYAN, engine.fx.chorus.enabled);
-                        });
-
-                        // 3. Ping-Pong Delay (Amber)
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut engine.fx.delay.enabled, "");
-                            ui.label(RichText::new("P-P DELAY:").size(10.5).color(CyberTheme::NEON_AMBER).strong());
-                            draw_rotary_knob(ui, &mut engine.fx.delay.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_AMBER);
-                            draw_rotary_knob(ui, &mut engine.fx.delay.feedback, 0.0..=0.9, "FDBK", CyberTheme::NEON_AMBER);
-                            draw_mini_fx_monitor(ui, 2, CyberTheme::NEON_AMBER, engine.fx.delay.enabled);
-                        });
-
-                        // 4. Reverb (Purple)
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut engine.fx.reverb.enabled, "");
-                            ui.label(RichText::new("REVERB:").size(10.5).color(CyberTheme::NEON_PURPLE).strong());
-                            draw_rotary_knob(ui, &mut engine.fx.reverb.room_size, 0.0..=1.0, "ROOM", CyberTheme::NEON_PURPLE);
-                            draw_rotary_knob(ui, &mut engine.fx.reverb.mix, 0.0..=1.0, "MIX", CyberTheme::NEON_PURPLE);
-                            draw_mini_fx_monitor(ui, 3, CyberTheme::NEON_PURPLE, engine.fx.reverb.enabled);
-                        });
-
-                        // 5. Trance Gate (Chopper)
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut engine.fx.gate.enabled, "");
-                            ui.label(RichText::new("TRANCE GATE (CHOPPER)").size(10.5).color(CyberTheme::NEON_LIME));
-                        });
-                    });
-                });
-            });
-
-            CyberTheme::draw_eurorack_screws(ui.painter(), fx_resp.response.rect);
-        });
-
-        // =========================================================================
-        // 2B. MODULAR ANALOG PATCH CABLES OVERLAY
-        // =========================================================================
-        let painter = ui.painter();
-        if let (Some(j1), Some(d1)) = (osc1_detune_jack, cable_dest_1) {
-            CyberTheme::draw_patch_socket(painter, j1, CyberTheme::NEON_CYAN);
-            CyberTheme::draw_patch_socket(painter, d1, CyberTheme::NEON_CYAN);
-            CyberTheme::draw_patch_cable(painter, j1, d1, CyberTheme::NEON_CYAN);
-        }
-
-        if let (Some(j2), Some(d2)) = (osc1_bend_jack, cable_dest_2) {
-            CyberTheme::draw_patch_socket(painter, j2, CyberTheme::NEON_CYAN);
-            CyberTheme::draw_patch_socket(painter, d2, CyberTheme::NEON_CYAN);
-            CyberTheme::draw_patch_cable(painter, j2, d2, CyberTheme::NEON_CYAN);
-        }
-
-        if let (Some(j3), Some(d3)) = (osc2_bend_jack, cable_dest_3) {
-            CyberTheme::draw_patch_socket(painter, j3, CyberTheme::NEON_PINK);
-            CyberTheme::draw_patch_socket(painter, d3, CyberTheme::NEON_PINK);
-            CyberTheme::draw_patch_cable(painter, j3, d3, CyberTheme::NEON_PINK);
-        }
-
-        ui.add_space(4.0);
-
-        // =========================================================================
-        // 3. STEP SEQUENCER DRAWER (64 STEPS WITH ROTARY DIAL & MINI RADAR OVERVIEW)
-        // =========================================================================
-        let active_step = engine.sequencer.current_step;
-        draw_sequencer_drawer(ui, &mut engine.sequencer, &mut engine.voices, &mut state.seq_ui_state, active_step);
-    });
-}
-
-/// Mini animated oscilloscope curve monitor for FX processors.
-fn draw_mini_fx_monitor(ui: &mut Ui, mode: u8, color: Color32, active: bool) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(50.0, 22.0), Sense::hover());
-    let painter = ui.painter();
-
-    // Dark recessed CRT monitor background
-    painter.rect_filled(rect, 2.0, Color32::from_rgb(7, 9, 14));
-    let border_col = if active {
-        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 140)
-    } else {
-        CyberTheme::BORDER_DARK
-    };
-    painter.rect_stroke(rect, 2.0, Stroke::new(1.0_f32, border_col), StrokeKind::Inside);
-
-    if !active {
-        // Flat inactive bypass line
-        let mid_y = rect.center().y;
-        painter.line_segment(
-            [pos2(rect.min.x + 3.0, mid_y), pos2(rect.max.x - 3.0, mid_y)],
-            Stroke::new(1.0_f32, Color32::from_rgb(32, 38, 52)),
-        );
-        return;
-    }
-
     let t = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f32())
         .unwrap_or(0.0);
 
-    let num_pts = 18;
-    let mut pts = Vec::with_capacity(num_pts);
+    // 60 FPS for the animated scopes, without starving the audio thread.
+    ui.ctx().request_repaint_after(Duration::from_millis(16));
 
-    for i in 0..num_pts {
-        let frac = i as f32 / (num_pts - 1) as f32; // 0..1
-        let x = rect.min.x + 3.0 + frac * (rect.width() - 6.0);
-        let y_norm = match mode {
-            0 => {
-                // Distortion S-curve transfer function
-                let x_sym = (frac - 0.5) * 2.0;
-                let y_val = ((x_sym * 2.5).tanh() + (frac * 6.0 * PI - t * 6.0).sin() * 0.15).clamp(-1.0, 1.0);
-                0.5 - y_val * 0.38
+    // Apply a queued preset with a non-blocking lock. Never hold the engine
+    // mutex while painting.
+    if let Some(idx) = state.pending_preset {
+        if let Some(mut engine) = state.engine.try_lock() {
+            if let Some(p) = state.presets.get(idx) {
+                p.apply_to_engine(&mut engine);
+                state.model = UiModel::capture(&engine);
             }
-            1 => {
-                // Chorus dual-phase sine modulation wave
-                let y_val = (frac * 3.5 * PI + t * 4.5).sin() * 0.8 + (frac * 7.0 * PI - t * 2.5).cos() * 0.2;
-                0.5 - y_val * 0.36
-            }
-            2 => {
-                // Delay stereo ping-pong bounce taps
-                let tap = ((frac * 5.5 + t * 2.5).fract() - 0.5).abs();
-                let decay = 1.0 - frac * 0.55;
-                0.5 - (tap * 2.0 - 0.5) * decay * 0.40
-            }
-            _ => {
-                // Reverb exponential diffusion decay envelope
-                let decay = (-frac * 3.2).exp();
-                let noise = ((frac * 24.0 + t * 3.5).sin() * 0.14) * decay;
-                0.78 - (decay * 0.62 + noise)
-            }
-        };
-        let y = rect.min.y + y_norm * rect.height();
-        pts.push(pos2(x, y));
+            state.pending_preset = None;
+        }
     }
 
-    for i in 0..pts.len().saturating_sub(1) {
-        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(1.3_f32, color));
+    // Live telemetry (separate atomics / short try_lock, no paint-time lock).
+    if let Some(engine) = state.engine.try_lock() {
+        state.live_step = engine.sequencer.current_step;
+    }
+    let active_voices = state.active_voices.load(Ordering::Relaxed);
+    let scope_samples = {
+        let mut out = [0.0f32; crate::audio::SCOPE_BUFFER_SIZE];
+        if let Some(scope) = state.scope.try_lock() {
+            for (i, s) in out.iter_mut().enumerate() {
+                *s = scope.buffer[(scope.write_idx + i) % crate::audio::SCOPE_BUFFER_SIZE];
+            }
+        }
+        out
+    };
+
+    // Base style.
+    {
+        let style = ui.style_mut();
+        style.spacing.item_spacing = vec2(5.0, 3.0);
+        style.spacing.button_padding = vec2(7.0, 2.0);
+        style.visuals.panel_fill = CyberTheme::BG_VOID;
+        style.visuals.window_fill = CyberTheme::BG_PANEL_ALT;
+        style.visuals.extreme_bg_color = CyberTheme::BG_RECESSED;
+        style.visuals.faint_bg_color = CyberTheme::BG_PANEL;
+        style.visuals.hyperlink_color = CyberTheme::NEON_CYAN;
+        style.visuals.selection.bg_fill = CyberTheme::alpha(CyberTheme::NEON_CYAN, 55);
+        style.visuals.selection.stroke = Stroke::new(1.0_f32, CyberTheme::NEON_CYAN);
+        style.visuals.widgets.noninteractive.fg_stroke =
+            Stroke::new(1.0_f32, CyberTheme::TEXT_MUTED);
+        style.visuals.widgets.inactive.bg_fill = CyberTheme::BG_RECESSED;
+        style.visuals.widgets.inactive.weak_bg_fill = CyberTheme::BG_RECESSED;
+        style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, CyberTheme::TEXT_PRIMARY);
+        style.visuals.widgets.inactive.corner_radius = 2.into();
+        style.visuals.widgets.hovered.bg_fill = CyberTheme::alpha(CyberTheme::NEON_CYAN, 30);
+        style.visuals.widgets.hovered.weak_bg_fill = CyberTheme::alpha(CyberTheme::NEON_CYAN, 30);
+        style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, CyberTheme::NEON_CYAN);
+        style.visuals.widgets.hovered.corner_radius = 2.into();
+        style.visuals.widgets.active.bg_fill = CyberTheme::alpha(CyberTheme::NEON_CYAN, 60);
+        style.visuals.widgets.active.weak_bg_fill = CyberTheme::alpha(CyberTheme::NEON_CYAN, 60);
+        style.visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+        style.visuals.widgets.active.corner_radius = 2.into();
+    }
+
+    let full = ui.max_rect();
+    CyberTheme::draw_backdrop(ui.painter(), full, t);
+
+    let root = full.shrink(10.0);
+    let top_h = 54.0;
+    let strip_h = 30.0;
+    let seq_h = 260.0;
+    let gap = 6.0;
+    let main_h = (root.height() - top_h - strip_h - seq_h - gap * 3.0).max(420.0);
+
+    let top_rect = Rect::from_min_size(root.min, vec2(root.width(), top_h));
+    let strip_rect = Rect::from_min_size(
+        pos2(root.min.x, top_rect.max.y + gap),
+        vec2(root.width(), strip_h),
+    );
+    let main_rect = Rect::from_min_size(
+        pos2(root.min.x, strip_rect.max.y + gap),
+        vec2(root.width(), main_h),
+    );
+    let seq_rect = Rect::from_min_size(
+        pos2(root.min.x, main_rect.max.y + gap),
+        vec2(root.width(), seq_h),
+    );
+
+    draw_top_bar(ui, top_rect, state, &scope_samples, active_voices, t);
+    draw_category_strip(ui, strip_rect, state, t);
+    draw_main_area(ui, main_rect, state, &scope_samples, active_voices, t);
+    draw_sequencer_deck(
+        ui,
+        seq_rect,
+        &mut state.model.seq,
+        &mut state.seq_ui_state,
+        state.live_step,
+        t,
+    );
+
+    CyberTheme::draw_overlay(ui.painter(), full);
+
+    // Push the final model back without ever blocking the audio callback.
+    if let Some(mut engine) = state.engine.try_lock() {
+        state.model.apply(&mut engine);
+    }
+}
+
+fn preset_group(category: &str) -> &'static str {
+    match category.to_ascii_uppercase().as_str() {
+        "BASS" | "SUB" => "BASS",
+        "PAD" | "CHOIR" | "ATMOSPHERE" => "PAD",
+        "DRONE" => "DRONE",
+        "LEAD" | "STAB" | "ACID" | "SYNC" => "LEAD",
+        "ARP" => "ARP",
+        "SEQUENCE" | "COMBAT" | "RAVE" => "SEQ",
+        "FX" | "GLITCH" => "FX",
+        _ => "OTHER",
+    }
+}
+
+fn group_color(group: &str) -> Color32 {
+    match group {
+        "BASS" => CyberTheme::NEON_AMBER,
+        "PAD" => CyberTheme::NEON_PURPLE,
+        "DRONE" => CyberTheme::NEON_BLUE,
+        "LEAD" => CyberTheme::NEON_MAGENTA,
+        "ARP" => CyberTheme::NEON_LIME,
+        "SEQ" => CyberTheme::NEON_CYAN,
+        "FX" => CyberTheme::NEON_RED,
+        _ => CyberTheme::NEON_AMBER,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Panels
+// ---------------------------------------------------------------------------
+
+fn panel(
+    ui: &mut Ui,
+    rect: Rect,
+    accent: Color32,
+    index: &str,
+    title: &str,
+    t: f32,
+    add: impl FnOnce(&mut Ui),
+) {
+    CyberTheme::card_shell(ui.painter(), rect, accent);
+    let content = CyberTheme::card_header(ui.painter(), rect, accent, index, title);
+    let inner = Rect::from_min_max(
+        pos2(content.min.x, content.min.y),
+        pos2(rect.max.x - 12.0, rect.max.y - 7.0),
+    );
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(inner)
+            .layout(Layout::top_down(Align::Min)),
+        |ui| {
+            ui.set_min_width(inner.width());
+            add(ui);
+        },
+    );
+    CyberTheme::card_chrome(ui.painter(), rect, accent, t);
+}
+
+fn draw_top_bar(
+    ui: &mut Ui,
+    rect: Rect,
+    state: &mut GuiSharedState,
+    _scope: &[f32],
+    active_voices: usize,
+    t: f32,
+) {
+    let accent = CyberTheme::NEON_CYAN;
+    CyberTheme::card_shell(ui.painter(), rect, accent);
+
+    // Logo block (painted for precise HUD typography).
+    let p = ui.painter();
+    let lx = rect.min.x + 18.0;
+    let ly = rect.min.y + 11.0;
+    // Hexagonal emblem
+    let c = pos2(lx + 12.0, ly + 15.0);
+    let hex: Vec<Pos2> = (0..6)
+        .map(|i| {
+            let a = PI / 6.0 + i as f32 * PI / 3.0;
+            pos2(c.x + a.cos() * 13.0, c.y + a.sin() * 13.0)
+        })
+        .collect();
+    p.add(nih_plug_egui::egui::Shape::convex_polygon(
+        hex,
+        CyberTheme::alpha(accent, 26),
+        Stroke::new(1.4_f32, accent),
+    ));
+    p.text(
+        c,
+        nih_plug_egui::egui::Align2::CENTER_CENTER,
+        "RW",
+        nih_plug_egui::egui::FontId::monospace(10.0),
+        accent,
+    );
+
+    p.text(
+        pos2(lx + 34.0, ly),
+        nih_plug_egui::egui::Align2::LEFT_TOP,
+        "REPLICANT",
+        nih_plug_egui::egui::FontId::monospace(17.0),
+        CyberTheme::TEXT_PRIMARY,
+    );
+    p.text(
+        pos2(lx + 137.0, ly),
+        nih_plug_egui::egui::Align2::LEFT_TOP,
+        "WAVE",
+        nih_plug_egui::egui::FontId::monospace(17.0),
+        CyberTheme::NEON_MAGENTA,
+    );
+    p.text(
+        pos2(lx + 35.0, ly + 23.0),
+        nih_plug_egui::egui::Align2::LEFT_TOP,
+        "NIGHT CITY AUDIO OS // NEON SERIES",
+        nih_plug_egui::egui::FontId::monospace(6.8),
+        CyberTheme::TEXT_DIM,
+    );
+
+    // Preset browser
+    let bx = rect.min.x + 290.0;
+    let by = rect.min.y + 9.0;
+    let indices = state.filtered_presets();
+    let pos = indices
+        .iter()
+        .position(|&i| i == state.current_preset_idx)
+        .unwrap_or(0);
+
+    let mut clicked_preset: Option<usize> = None;
+    ui.allocate_new_ui(
+        UiBuilder::new()
+            .max_rect(Rect::from_min_size(pos2(bx, by), vec2(470.0, 38.0)))
+            .layout(Layout::left_to_right(Align::Center)),
+        |ui| {
+            if ui
+                .add(neon_button("◀", CyberTheme::NEON_CYAN, false))
+                .on_hover_text("Previous preset")
+                .clicked()
+            {
+                if !indices.is_empty() {
+                    let ni = if pos == 0 { indices.len() - 1 } else { pos - 1 };
+                    clicked_preset = Some(indices[ni]);
+                }
+            }
+
+            let cur = &state.presets[state.current_preset_idx];
+            let color = group_color(preset_group(&cur.category));
+            ui.label(
+                RichText::new(format!("{:03}", state.current_preset_idx + 1))
+                    .color(CyberTheme::TEXT_DIM)
+                    .monospace()
+                    .size(9.0),
+            );
+            ComboBox::from_id_salt("night_city_preset")
+                .selected_text(
+                    RichText::new(format!("{}  //  {}", cur.name, cur.category.to_uppercase()))
+                        .color(color)
+                        .monospace()
+                        .size(11.0),
+                )
+                .width(250.0)
+                .show_ui(ui, |ui| {
+                    for &idx in &indices {
+                        let p = &state.presets[idx];
+                        let label = format!("{:03}  {}  [{}]", idx + 1, p.name, p.category);
+                        if ui
+                            .selectable_label(idx == state.current_preset_idx, label)
+                            .clicked()
+                        {
+                            clicked_preset = Some(idx);
+                        }
+                    }
+                });
+
+            if ui
+                .add(neon_button("▶", CyberTheme::NEON_CYAN, false))
+                .on_hover_text("Next preset")
+                .clicked()
+            {
+                if !indices.is_empty() {
+                    let ni = (pos + 1) % indices.len();
+                    clicked_preset = Some(indices[ni]);
+                }
+            }
+        },
+    );
+    if let Some(idx) = clicked_preset {
+        state.queue_preset(idx);
+    }
+
+    // Voices LED meter + master + donate
+    let right = rect.max.x - 18.0;
+    let master_rect = Rect::from_min_size(pos2(right - 210.0, rect.min.y + 5.0), vec2(48.0, 44.0));
+    ui.allocate_new_ui(UiBuilder::new().max_rect(master_rect), |ui| {
+        draw_rotary_knob(
+            ui,
+            &mut state.model.master,
+            0.0..=1.5,
+            "MASTER",
+            CyberTheme::NEON_AMBER,
+        );
+    });
+
+    ui.allocate_new_ui(
+        UiBuilder::new().max_rect(Rect::from_min_size(
+            pos2(right - 330.0, rect.min.y + 10.0),
+            vec2(112.0, 36.0),
+        )),
+        |ui| {
+            ui.vertical(|ui| {
+                ui.label(
+                    RichText::new(format!("VOICES {:02}/16", active_voices))
+                        .color(if active_voices > 0 {
+                            CyberTheme::NEON_LIME
+                        } else {
+                            CyberTheme::TEXT_MUTED
+                        })
+                        .monospace()
+                        .strong()
+                        .size(8.5),
+                );
+                let (r, _) = ui.allocate_exact_size(vec2(104.0, 6.0), Sense::hover());
+                CyberTheme::led_meter(
+                    ui.painter(),
+                    r,
+                    active_voices as f32 / 16.0,
+                    CyberTheme::NEON_LIME,
+                    16,
+                    false,
+                );
+                ui.label(
+                    RichText::new(format!("STEP {:02}", state.live_step + 1))
+                        .color(CyberTheme::TEXT_DIM)
+                        .monospace()
+                        .size(7.0),
+                );
+            });
+        },
+    );
+
+    if ui
+        .allocate_new_ui(
+            UiBuilder::new().max_rect(Rect::from_min_size(
+                pos2(right - 430.0, rect.min.y + 14.0),
+                vec2(90.0, 26.0),
+            )),
+            |ui| {
+                ui.add(neon_button("DONATE ☕", CyberTheme::NEON_AMBER, true))
+                    .on_hover_text("Support ReplicantWave on PayPal")
+            },
+        )
+        .inner
+        .clicked()
+    {
+        let _ = open::that(DONATION_URL);
+    }
+
+    // Animated scan tick marks on the right edge.
+    for i in 0..6 {
+        let x = rect.max.x - 8.0 - i as f32 * 4.0;
+        let a = (60.0 + 40.0 * (t * 2.0 + i as f32).sin()) as u8;
+        ui.painter().line_segment(
+            [pos2(x, rect.min.y + 8.0), pos2(x, rect.max.y - 8.0)],
+            Stroke::new(1.0_f32, CyberTheme::alpha(CyberTheme::NEON_CYAN, a / 4)),
+        );
+    }
+}
+
+fn draw_category_strip(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f32) {
+    CyberTheme::card_shell(ui.painter(), rect, CyberTheme::NEON_PURPLE);
+    let inner = rect.shrink2(vec2(12.0, 4.0));
+    let mut new_category = state.category;
+    ui.allocate_new_ui(
+        UiBuilder::new()
+            .max_rect(inner)
+            .layout(Layout::left_to_right(Align::Center)),
+        |ui| {
+            ui.label(
+                RichText::new("BANK")
+                    .color(CyberTheme::NEON_PURPLE)
+                    .monospace()
+                    .strong()
+                    .size(8.5),
+            );
+            for (i, cat) in CATEGORIES.iter().enumerate() {
+                let color = if *cat == "ALL" {
+                    CyberTheme::NEON_CYAN
+                } else {
+                    group_color(cat)
+                };
+                if ui
+                    .add(category_button(cat, state.category == i, color))
+                    .clicked()
+                {
+                    new_category = i;
+                }
+            }
+
+            ui.add_space(8.0);
+            let count = if state.category == 0 {
+                state.presets.len()
+            } else {
+                state.filtered_presets().len()
+            };
+            ui.label(
+                RichText::new(format!("{:02} PATCHES", count))
+                    .color(CyberTheme::TEXT_DIM)
+                    .monospace()
+                    .size(7.5),
+            );
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui
+                    .add(neon_button("RND SEQ", CyberTheme::NEON_LIME, false))
+                    .on_hover_text("Generate a new cyberpunk pattern")
+                    .clicked()
+                {
+                    randomize_steps(&mut state.model.seq.steps, t.to_bits() ^ 0x9e37_79b9);
+                }
+                ui.label(
+                    RichText::new("64-STEP SLIDING MATRIX")
+                        .color(CyberTheme::alpha(CyberTheme::NEON_CYAN, 150))
+                        .monospace()
+                        .size(7.5),
+                );
+            });
+        },
+    );
+
+    if new_category != state.category {
+        state.category = new_category;
+        if new_category != 0 {
+            let list = state.filtered_presets();
+            if !list.is_empty() && !list.contains(&state.current_preset_idx) {
+                let idx = list[0];
+                state.queue_preset(idx);
+            }
+        }
+    }
+}
+
+fn draw_main_area(
+    ui: &mut Ui,
+    rect: Rect,
+    state: &mut GuiSharedState,
+    scope: &[f32],
+    active_voices: usize,
+    t: f32,
+) {
+    let gap = 8.0;
+    let left_w = 610.0;
+    let card_w = (left_w - gap) * 0.5;
+    let row_h = (rect.height() - gap) * 0.5;
+    let right_x = rect.min.x + left_w + gap;
+    let right_w = rect.max.x - right_x;
+
+    // OSC 1 / OSC 2
+    let osc1_rect = Rect::from_min_size(rect.min, vec2(card_w, row_h));
+    let osc2_rect = Rect::from_min_size(
+        pos2(rect.min.x + card_w + gap, rect.min.y),
+        vec2(card_w, row_h),
+    );
+    draw_osc_card(
+        ui,
+        osc1_rect,
+        "01",
+        "OSCILLATOR // A",
+        CyberTheme::NEON_CYAN,
+        &mut state.model.osc1,
+        &state.wave_thumbs,
+        &state.wave_names,
+        t,
+    );
+    draw_osc_card(
+        ui,
+        osc2_rect,
+        "02",
+        "OSCILLATOR // B",
+        CyberTheme::NEON_MAGENTA,
+        &mut state.model.osc2,
+        &state.wave_thumbs,
+        &state.wave_names,
+        t,
+    );
+
+    // SUB + NOISE / FILTER
+    let low_y = rect.min.y + row_h + gap;
+    let sub_rect = Rect::from_min_size(pos2(rect.min.x, low_y), vec2(card_w, row_h));
+    let filter_rect =
+        Rect::from_min_size(pos2(rect.min.x + card_w + gap, low_y), vec2(card_w, row_h));
+    draw_sub_noise_card(ui, sub_rect, state, t);
+    draw_filter_card(ui, filter_rect, state, t);
+
+    // Right column: scope, envelopes, FX
+    let scope_h = 158.0;
+    let env_h = 172.0;
+    let scope_rect = Rect::from_min_size(pos2(right_x, rect.min.y), vec2(right_w, scope_h));
+    draw_scope_card(ui, scope_rect, scope, active_voices, state, t);
+
+    let env_y = rect.min.y + scope_h + gap;
+    let env_w = (right_w - gap) * 0.5;
+    let amp_rect = Rect::from_min_size(pos2(right_x, env_y), vec2(env_w, env_h));
+    let flt_env_rect = Rect::from_min_size(pos2(right_x + env_w + gap, env_y), vec2(env_w, env_h));
+    draw_env_card(
+        ui,
+        amp_rect,
+        "06",
+        "AMP ENVELOPE",
+        CyberTheme::NEON_PINK,
+        &mut state.model.amp_env,
+        t,
+    );
+    draw_env_card(
+        ui,
+        flt_env_rect,
+        "07",
+        "FILTER ENVELOPE",
+        CyberTheme::NEON_CYAN,
+        &mut state.model.filter_env,
+        t,
+    );
+
+    let fx_y = env_y + env_h + gap;
+    let fx_rect = Rect::from_min_size(
+        pos2(right_x, fx_y),
+        vec2(right_w, (rect.max.y - fx_y).max(120.0)),
+    );
+    draw_fx_card(ui, fx_rect, &mut state.model.fx, t);
+}
+
+fn draw_osc_card(
+    ui: &mut Ui,
+    rect: Rect,
+    index: &str,
+    title: &str,
+    color: Color32,
+    osc: &mut OscUi,
+    thumbs: &[WaveThumb],
+    names: &[String],
+    t: f32,
+) {
+    panel(ui, rect, color, index, title, t, |ui| {
+        // header + table selection
+        ui.horizontal(|ui| {
+            small_chip(ui, &mut osc.enabled, "ON", color, 48.0);
+            ui.label(
+                RichText::new("TABLE")
+                    .color(CyberTheme::TEXT_DIM)
+                    .monospace()
+                    .size(7.0),
+            );
+            ComboBox::from_id_salt(format!("wt_combo_{}", index))
+                .selected_text(
+                    RichText::new(names.get(osc.table).cloned().unwrap_or_else(|| "—".into()))
+                        .color(color)
+                        .monospace()
+                        .size(9.0),
+                )
+                .width(150.0)
+                .show_ui(ui, |ui| {
+                    for (i, name) in names.iter().enumerate() {
+                        ui.selectable_value(&mut osc.table, i, name);
+                    }
+                });
+        });
+
+        if let Some(thumb) = thumbs.get(osc.table % thumbs.len().max(1)) {
+            draw_wavetable_preview(ui, thumb, osc.pos, color, ui.available_width(), 96.0);
+        }
+
+        ui.horizontal(|ui| {
+            draw_rotary_knob(ui, &mut osc.pos, 0.0..=1.0, "POS", color);
+            draw_rotary_knob(ui, &mut osc.tune, -36.0..=36.0, "TUNE", color);
+            draw_rotary_knob_usize(ui, &mut osc.unison, 1..=8, "UNISON", color);
+            draw_rotary_knob(ui, &mut osc.detune, 0.0..=1.0, "DETUNE", color);
+            draw_rotary_knob(ui, &mut osc.fine, -100.0..=100.0, "FINE", color);
+        });
+        ui.horizontal(|ui| {
+            draw_rotary_knob(ui, &mut osc.level, 0.0..=1.5, "LEVEL", color);
+            draw_rotary_knob(ui, &mut osc.spread, 0.0..=1.0, "SPREAD", color);
+            draw_rotary_knob(ui, &mut osc.formant, -1.0..=1.0, "FORMANT", color);
+            draw_rotary_knob(ui, &mut osc.bend, -1.0..=1.0, "BEND", color);
+            draw_rotary_knob(ui, &mut osc.pan, -1.0..=1.0, "PAN", color);
+        });
+    });
+}
+
+fn draw_sub_noise_card(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f32) {
+    let color = CyberTheme::NEON_LIME;
+    let model = &mut state.model;
+    panel(ui, rect, color, "03", "SUB + NOISE", t, |ui| {
+        ui.horizontal(|ui| {
+            small_chip(ui, &mut model.sub_enabled, "SUB", color, 48.0);
+            let waves = ["SINE", "TRI", "SAW", "PULSE 50", "PULSE 25", "PULSE 12"];
+            ComboBox::from_id_salt("sub_wave")
+                .selected_text(waves[model.sub_wave.min(waves.len() - 1)])
+                .width(96.0)
+                .show_ui(ui, |ui| {
+                    for (i, w) in waves.iter().enumerate() {
+                        ui.selectable_value(&mut model.sub_wave, i, *w);
+                    }
+                });
+            for oct in [-2i8, -1, 0] {
+                if ui
+                    .add(category_button(
+                        &format!("{:+}", oct),
+                        model.sub_octave == oct,
+                        CyberTheme::NEON_LIME,
+                    ))
+                    .clicked()
+                {
+                    model.sub_octave = oct;
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            draw_rotary_knob(ui, &mut model.sub_level, 0.0..=1.0, "S LVL", color);
+            draw_rotary_knob(ui, &mut model.sub_pan, -1.0..=1.0, "S PAN", color);
+        });
+
+        ui.add_space(3.0);
+        ui.painter().line_segment(
+            [
+                pos2(ui.min_rect().min.x, ui.cursor().min.y),
+                pos2(ui.min_rect().max.x, ui.cursor().min.y),
+            ],
+            Stroke::new(1.0_f32, CyberTheme::alpha(color, 40)),
+        );
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            small_chip(
+                ui,
+                &mut model.noise_enabled,
+                "NOISE",
+                CyberTheme::NEON_CYAN,
+                58.0,
+            );
+            let kinds = ["WHITE", "PINK", "CYBERBIT"];
+            let idx = match model.noise_type {
+                NoiseType::White => 0,
+                NoiseType::Pink => 1,
+                NoiseType::CyberBit => 2,
+            };
+            let mut sel = idx;
+            ComboBox::from_id_salt("noise_type")
+                .selected_text(kinds[idx])
+                .width(96.0)
+                .show_ui(ui, |ui| {
+                    for (i, k) in kinds.iter().enumerate() {
+                        ui.selectable_value(&mut sel, i, *k);
+                    }
+                });
+            model.noise_type = match sel {
+                0 => NoiseType::White,
+                1 => NoiseType::Pink,
+                _ => NoiseType::CyberBit,
+            };
+        });
+        ui.horizontal(|ui| {
+            draw_rotary_knob(
+                ui,
+                &mut model.noise_level,
+                0.0..=1.0,
+                "N LVL",
+                CyberTheme::NEON_CYAN,
+            );
+            draw_rotary_knob(
+                ui,
+                &mut model.noise_pan,
+                -1.0..=1.0,
+                "N PAN",
+                CyberTheme::NEON_CYAN,
+            );
+        });
+    });
+}
+
+fn draw_filter_card(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f32) {
+    let color = CyberTheme::NEON_AMBER;
+    let f = &mut state.model.filter;
+    panel(ui, rect, color, "04", "MULTIMODE FILTER", t, |ui| {
+        ui.horizontal(|ui| {
+            small_chip(ui, &mut f.enabled, "ON", color, 44.0);
+            let kinds = [
+                "LP 12", "LP 24", "HP 12", "HP 24", "BP 12", "BP 24", "NOTCH",
+            ];
+            let idx = match f.kind {
+                FilterType::LowPass12 => 0,
+                FilterType::LowPass24 => 1,
+                FilterType::HighPass12 => 2,
+                FilterType::HighPass24 => 3,
+                FilterType::BandPass12 => 4,
+                FilterType::BandPass24 => 5,
+                FilterType::Notch => 6,
+            };
+            let mut sel = idx;
+            ComboBox::from_id_salt("filter_type")
+                .selected_text(kinds[idx])
+                .width(82.0)
+                .show_ui(ui, |ui| {
+                    for (i, k) in kinds.iter().enumerate() {
+                        ui.selectable_value(&mut sel, i, *k);
+                    }
+                });
+            f.kind = FilterType::from_index(sel);
+            ui.label(
+                RichText::new("ZDF")
+                    .color(CyberTheme::TEXT_DIM)
+                    .monospace()
+                    .size(7.0),
+            );
+        });
+        ui.horizontal(|ui| {
+            draw_rotary_knob_log(ui, &mut f.cutoff, 20.0..=18000.0, "CUTOFF", color);
+            draw_rotary_knob(ui, &mut f.reso, 0.0..=1.0, "RESO", color);
+            draw_rotary_knob(ui, &mut f.drive, 1.0..=4.0, "DRIVE", CyberTheme::NEON_PINK);
+            draw_rotary_knob(ui, &mut f.env_amount, -1.0..=1.0, "ENV MOD", color);
+            draw_rotary_knob(ui, &mut f.key, 0.0..=1.0, "KEY", CyberTheme::NEON_CYAN);
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("ROUTE")
+                    .color(CyberTheme::TEXT_DIM)
+                    .monospace()
+                    .size(7.0),
+            );
+            small_chip(ui, &mut f.route_osc1, "OSC1", CyberTheme::NEON_CYAN, 52.0);
+            small_chip(
+                ui,
+                &mut f.route_osc2,
+                "OSC2",
+                CyberTheme::NEON_MAGENTA,
+                52.0,
+            );
+            small_chip(ui, &mut f.route_sub, "SUB", CyberTheme::NEON_LIME, 44.0);
+            small_chip(
+                ui,
+                &mut f.route_noise,
+                "NOISE",
+                CyberTheme::NEON_AMBER,
+                56.0,
+            );
+            draw_rotary_knob(ui, &mut f.vel, 0.0..=1.0, "VEL", CyberTheme::NEON_CYAN);
+        });
+        // ZDF magnitude response, so the filter can be read at a glance.
+        let h = ui.available_height().min(52.0).max(34.0);
+        if h > 30.0 {
+            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
+            draw_filter_response(ui, rect, f.kind, f.cutoff, f.reso, color);
+        }
+    });
+}
+
+fn draw_filter_response(
+    ui: &mut Ui,
+    rect: Rect,
+    kind: FilterType,
+    cutoff: f32,
+    reso: f32,
+    color: Color32,
+) {
+    let p = ui.painter();
+    p.rect_filled(rect, 2.0, Color32::from_rgb(4, 2, 11));
+    p.rect_stroke(
+        rect,
+        2.0,
+        Stroke::new(1.0_f32, CyberTheme::alpha(color, 35)),
+        StrokeKind::Inside,
+    );
+    // Log-frequency grid.
+    for i in 1..6 {
+        let x = rect.min.x + rect.width() * i as f32 / 6.0;
+        p.line_segment(
+            [pos2(x, rect.min.y + 2.0), pos2(x, rect.max.y - 2.0)],
+            Stroke::new(0.5_f32, CyberTheme::alpha(color, 14)),
+        );
+    }
+    p.text(
+        pos2(rect.min.x + 4.0, rect.min.y + 2.0),
+        nih_plug_egui::egui::Align2::LEFT_TOP,
+        "ZDF RESPONSE",
+        nih_plug_egui::egui::FontId::monospace(6.2),
+        CyberTheme::alpha(color, 160),
+    );
+
+    let f_min = 20.0f32;
+    let f_max = 20000.0f32;
+    let n = 96;
+    let q = 0.707 + reso.clamp(0.0, 1.0) * 19.3;
+    let mut pts = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f32 / (n - 1) as f32;
+        let freq = f_min * (f_max / f_min).powf(t);
+        let x = freq / cutoff.max(1.0);
+        let x2 = x * x;
+        let mag = match kind {
+            FilterType::LowPass12 => 1.0 / (1.0 + x2 * x2).sqrt(),
+            FilterType::LowPass24 => 1.0 / (1.0 + x2),
+            FilterType::HighPass12 => x2 / (1.0 + x2 * x2).sqrt(),
+            FilterType::HighPass24 => x2 / (1.0 + x2),
+            FilterType::BandPass12 => (x / q) / ((1.0 - x2).powi(2) + (x / q).powi(2)).sqrt(),
+            FilterType::BandPass24 => {
+                let a = (x / q) / ((1.0 - x2).powi(2) + (x / q).powi(2)).sqrt();
+                a * a
+            }
+            FilterType::Notch => {
+                let num = (1.0 - x2).abs();
+                let den = ((1.0 - x2).powi(2) + (x / q).powi(2)).sqrt();
+                num / den.max(1e-6)
+            }
+        }
+        .clamp(0.0, 1.0);
+        let db = 20.0 * mag.max(1e-4).log10();
+        let y = rect.max.y - 4.0 - ((db.clamp(-48.0, 12.0) + 48.0) / 60.0) * (rect.height() - 10.0);
+        pts.push(pos2(rect.min.x + 2.0 + t * (rect.width() - 4.0), y));
+    }
+    for i in 0..pts.len() - 1 {
+        p.line_segment(
+            [pts[i], pts[i + 1]],
+            Stroke::new(4.0_f32, CyberTheme::alpha(color, 35)),
+        );
+    }
+    for i in 0..pts.len() - 1 {
+        p.line_segment([pts[i], pts[i + 1]], Stroke::new(1.3_f32, color));
+    }
+    // Cutoff marker.
+    let ct = (cutoff.max(f_min) / f_min).ln() / (f_max / f_min).ln();
+    let cx = rect.min.x + 2.0 + ct.clamp(0.0, 1.0) * (rect.width() - 4.0);
+    p.line_segment(
+        [pos2(cx, rect.min.y + 10.0), pos2(cx, rect.max.y - 2.0)],
+        Stroke::new(1.0_f32, CyberTheme::alpha(color, 130)),
+    );
+}
+
+fn draw_scope_card(
+    ui: &mut Ui,
+    rect: Rect,
+    scope: &[f32],
+    active_voices: usize,
+    _state: &mut GuiSharedState,
+    t: f32,
+) {
+    let color = CyberTheme::NEON_CYAN;
+    panel(ui, rect, color, "05", "SIGNAL MONITOR", t, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("LIVE SIGNAL // PHOSPHOR VECTOR")
+                    .color(color)
+                    .monospace()
+                    .strong()
+                    .size(8.5),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!("DSP IN {:02} VOICES", active_voices))
+                        .color(CyberTheme::NEON_LIME)
+                        .monospace()
+                        .size(7.5),
+                );
+                ui.label(
+                    RichText::new("48 kHz / 64-BIT")
+                        .color(CyberTheme::TEXT_DIM)
+                        .monospace()
+                        .size(7.0),
+                );
+            });
+        });
+        let h = ui.available_height().max(70.0);
+        draw_oscilloscope(ui, scope, ui.available_width(), h);
+    });
+}
+
+fn draw_env_card(
+    ui: &mut Ui,
+    rect: Rect,
+    index: &str,
+    title: &str,
+    color: Color32,
+    env: &mut EnvUi,
+    t: f32,
+) {
+    panel(ui, rect, color, index, title, t, |ui| {
+        // ADSR curve
+        let (curve_rect, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::hover());
+        draw_adsr(ui, curve_rect, env, color);
+        ui.horizontal(|ui| {
+            draw_rotary_knob_log(ui, &mut env.attack, 0.001..=5.0, "ATK", color);
+            draw_rotary_knob_log(ui, &mut env.decay, 0.01..=5.0, "DEC", color);
+            draw_rotary_knob(ui, &mut env.sustain, 0.0..=1.0, "SUS", color);
+            draw_rotary_knob_log(ui, &mut env.release, 0.01..=5.0, "REL", color);
+        });
+    });
+}
+
+fn draw_adsr(ui: &mut Ui, rect: Rect, env: &EnvUi, color: Color32) {
+    let p = ui.painter();
+    p.rect_filled(rect, 2.0, Color32::from_rgb(4, 2, 11));
+    p.rect_stroke(
+        rect,
+        2.0,
+        Stroke::new(1.0_f32, CyberTheme::alpha(color, 40)),
+        StrokeKind::Inside,
+    );
+    for i in 0..4 {
+        let x = rect.min.x + rect.width() * (i as f32 + 1.0) / 5.0;
+        p.line_segment(
+            [pos2(x, rect.min.y + 3.0), pos2(x, rect.max.y - 3.0)],
+            Stroke::new(0.5_f32, CyberTheme::alpha(color, 16)),
+        );
+    }
+
+    let total = env.attack + env.decay + 0.6 + env.release;
+    let a = (env.attack / total).clamp(0.02, 0.5);
+    let d = (env.decay / total).clamp(0.02, 0.4);
+    let r = (env.release / total).clamp(0.03, 0.5);
+    let sustain = env.sustain.clamp(0.0, 1.0);
+    let (x0, y0) = (rect.min.x + 4.0, rect.max.y - 3.0);
+    let w = rect.width() - 8.0;
+    let h = rect.height() - 7.0;
+    let xa = x0 + w * a;
+    let xd = xa + w * d;
+    let xs = rect.max.x - 4.0 - w * r;
+    if xs < xd {
+        // long release: keep the sustain segment short
+    }
+    let xs = xs.max(xd);
+
+    let pts = vec![
+        pos2(x0, y0),
+        pos2(xa, rect.min.y + 3.0),
+        pos2(xd, rect.min.y + 3.0 + h * (1.0 - sustain)),
+        pos2(xs, rect.min.y + 3.0 + h * (1.0 - sustain)),
+        pos2(rect.max.x - 4.0, y0),
+    ];
+    for i in 0..pts.len() - 1 {
+        p.line_segment(
+            [pts[i], pts[i + 1]],
+            Stroke::new(4.0_f32, CyberTheme::alpha(color, 35)),
+        );
+    }
+    for i in 0..pts.len() - 1 {
+        p.line_segment([pts[i], pts[i + 1]], Stroke::new(1.5_f32, color));
+    }
+    for pt in &pts[1..pts.len() - 1] {
+        p.circle_filled(*pt, 2.0, Color32::WHITE);
+    }
+}
+
+fn draw_fx_card(ui: &mut Ui, rect: Rect, fx: &mut FxUi, t: f32) {
+    let color = CyberTheme::NEON_PURPLE;
+    panel(ui, rect, color, "08", "FX RACK // SIGNAL CHAIN", t, |ui| {
+        // 1. Distortion
+        ui.horizontal(|ui| {
+            small_chip(ui, &mut fx.dist_enabled, "DIST", CyberTheme::NEON_RED, 58.0);
+            let modes = ["OVERDRIVE", "CRUSHER", "FIRE", "GRIND"];
+            let idx = match fx.dist_mode {
+                DistortionMode::SoftOverdrive => 0,
+                DistortionMode::BitCrusher => 1,
+                DistortionMode::FireAmp => 2,
+                DistortionMode::GrindAmp => 3,
+            };
+            let mut sel = idx;
+            ComboBox::from_id_salt("dist_mode")
+                .selected_text(modes[idx])
+                .width(86.0)
+                .show_ui(ui, |ui| {
+                    for (i, m) in modes.iter().enumerate() {
+                        ui.selectable_value(&mut sel, i, *m);
+                    }
+                });
+            fx.dist_mode = match sel {
+                0 => DistortionMode::SoftOverdrive,
+                1 => DistortionMode::BitCrusher,
+                2 => DistortionMode::FireAmp,
+                _ => DistortionMode::GrindAmp,
+            };
+            neon_slider(
+                ui,
+                &mut fx.dist_amount,
+                0.0..=1.0,
+                "DRIVE",
+                180.0,
+                CyberTheme::NEON_RED,
+            );
+            neon_slider(
+                ui,
+                &mut fx.dist_mix,
+                0.0..=1.0,
+                "MIX",
+                150.0,
+                CyberTheme::NEON_RED,
+            );
+        });
+        // 2. Chorus
+        ui.horizontal(|ui| {
+            small_chip(
+                ui,
+                &mut fx.chorus_enabled,
+                "CHORUS",
+                CyberTheme::NEON_CYAN,
+                68.0,
+            );
+            neon_slider(
+                ui,
+                &mut fx.chorus_mix,
+                0.0..=1.0,
+                "MIX",
+                180.0,
+                CyberTheme::NEON_CYAN,
+            );
+            neon_slider(
+                ui,
+                &mut fx.chorus_rate,
+                0.1..=8.0,
+                "RATE",
+                150.0,
+                CyberTheme::NEON_CYAN,
+            );
+        });
+        // 3. Ping-pong delay
+        ui.horizontal(|ui| {
+            small_chip(
+                ui,
+                &mut fx.delay_enabled,
+                "DELAY",
+                CyberTheme::NEON_AMBER,
+                58.0,
+            );
+            small_chip(
+                ui,
+                &mut fx.delay_pingpong,
+                "P-P",
+                CyberTheme::NEON_AMBER,
+                48.0,
+            );
+            neon_slider(
+                ui,
+                &mut fx.delay_mix,
+                0.0..=1.0,
+                "MIX",
+                150.0,
+                CyberTheme::NEON_AMBER,
+            );
+            neon_slider(
+                ui,
+                &mut fx.delay_fb,
+                0.0..=0.9,
+                "FDBK",
+                130.0,
+                CyberTheme::NEON_AMBER,
+            );
+            neon_slider(
+                ui,
+                &mut fx.delay_time,
+                20.0..=1200.0,
+                "TIME",
+                120.0,
+                CyberTheme::NEON_AMBER,
+            );
+        });
+        // 4. Reverb
+        ui.horizontal(|ui| {
+            small_chip(
+                ui,
+                &mut fx.reverb_enabled,
+                "REVERB",
+                CyberTheme::NEON_PURPLE,
+                68.0,
+            );
+            neon_slider(
+                ui,
+                &mut fx.reverb_size,
+                0.0..=1.0,
+                "ROOM",
+                180.0,
+                CyberTheme::NEON_PURPLE,
+            );
+            neon_slider(
+                ui,
+                &mut fx.reverb_mix,
+                0.0..=1.0,
+                "MIX",
+                150.0,
+                CyberTheme::NEON_PURPLE,
+            );
+        });
+        // 5. Trance gate
+        ui.horizontal(|ui| {
+            small_chip(
+                ui,
+                &mut fx.gate_enabled,
+                "TRANCE GATE",
+                CyberTheme::NEON_LIME,
+                104.0,
+            );
+            ui.label(
+                RichText::new("16-STEP CHOPPER // TEMPO LOCKED")
+                    .color(CyberTheme::TEXT_DIM)
+                    .monospace()
+                    .size(7.0),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(
+                    RichText::new("GATE → CHORUS → DRIVE → DELAY → REVERB")
+                        .color(CyberTheme::alpha(CyberTheme::NEON_PURPLE, 180))
+                        .monospace()
+                        .size(6.8),
+                );
+            });
+        });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Small widgets
+// ---------------------------------------------------------------------------
+
+pub(crate) fn neon_button(text: &str, color: Color32, filled: bool) -> Button<'static> {
+    let txt = RichText::new(text.to_string())
+        .color(if filled { CyberTheme::BG_VOID } else { color })
+        .monospace()
+        .strong()
+        .size(9.5);
+    let btn = Button::new(txt)
+        .fill(if filled {
+            color
+        } else {
+            CyberTheme::alpha(color, 18)
+        })
+        .stroke(Stroke::new(1.0_f32, color))
+        .corner_radius(2.0);
+    btn
+}
+
+pub(crate) fn category_button(text: &str, selected: bool, color: Color32) -> Button<'static> {
+    let txt = RichText::new(text.to_string())
+        .color(if selected {
+            CyberTheme::BG_VOID
+        } else {
+            CyberTheme::TEXT_MUTED
+        })
+        .monospace()
+        .strong()
+        .size(7.6);
+    Button::new(txt)
+        .fill(if selected {
+            color
+        } else {
+            Color32::from_rgb(10, 6, 22)
+        })
+        .stroke(Stroke::new(
+            1.0_f32,
+            if selected {
+                color
+            } else {
+                CyberTheme::BORDER_DARK
+            },
+        ))
+        .corner_radius(1.5)
+}
+
+fn small_chip(ui: &mut Ui, on: &mut bool, label: &str, color: Color32, width: f32) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, 17.0), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+    }
+    CyberTheme::chip(ui.painter(), rect, *on, color, label);
+    resp.on_hover_cursor(nih_plug_egui::egui::CursorIcon::PointingHand)
+}
+
+pub(crate) fn neon_slider(
+    ui: &mut Ui,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    label: &str,
+    width: f32,
+    color: Color32,
+) -> Response {
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(width, 22.0), Sense::click_and_drag());
+    let min = *range.start();
+    let max = *range.end();
+    let span = (max - min).max(1e-6);
+    let track = Rect::from_min_max(
+        pos2(rect.min.x + 38.0, rect.center().y - 2.5),
+        pos2(rect.max.x - 30.0, rect.center().y + 2.5),
+    );
+
+    if (resp.dragged() || resp.clicked()) && track.width() > 1.0 {
+        if let Some(p) = resp.interact_pointer_pos() {
+            let n = ((p.x - track.min.x) / track.width()).clamp(0.0, 1.0);
+            *value = min + n * span;
+            resp.mark_changed();
+        }
+    }
+
+    let norm = ((*value - min) / span).clamp(0.0, 1.0);
+    let p = ui.painter();
+    p.text(
+        pos2(rect.min.x, rect.center().y),
+        nih_plug_egui::egui::Align2::LEFT_CENTER,
+        label,
+        nih_plug_egui::egui::FontId::monospace(7.0),
+        CyberTheme::TEXT_MUTED,
+    );
+    p.rect_filled(track, 1.0, Color32::from_rgb(24, 14, 42));
+    let fill = Rect::from_min_max(
+        track.min,
+        pos2(track.min.x + track.width() * norm, track.max.y),
+    );
+    p.rect_filled(fill, 1.0, CyberTheme::alpha(color, 55));
+    p.line_segment(
+        [pos2(fill.max.x, track.min.y), pos2(fill.max.x, track.max.y)],
+        Stroke::new(1.6_f32, color),
+    );
+    p.circle_filled(pos2(fill.max.x, track.center().y), 2.4, color);
+    p.text(
+        pos2(rect.max.x, rect.center().y),
+        nih_plug_egui::egui::Align2::RIGHT_CENTER,
+        if span > 100.0 {
+            format!("{:.0}", value)
+        } else if span > 10.0 {
+            format!("{:.1}", value)
+        } else {
+            format!("{:.2}", value)
+        },
+        nih_plug_egui::egui::FontId::monospace(6.8),
+        CyberTheme::TEXT_PRIMARY,
+    );
+
+    resp
+}
+
+fn randomize_steps(steps: &mut [crate::audio::step_sequencer::Step; 64], seed: u32) {
+    let scale = [0i8, 2, 3, 5, 7, 8, 10, 12, 15, 17, 19, 22, 24];
+    let mut s = seed | 1;
+    for (i, step) in steps.iter_mut().enumerate() {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        step.gate = (s % 100) < 72;
+        step.accent = (s >> 8) % 100 < 28;
+        step.slide = (s >> 16) % 100 < 22;
+        step.tie = false;
+        step.velocity = if step.accent {
+            122
+        } else {
+            84 + ((s >> 4) % 34) as u8
+        };
+        step.note_offset = scale[((s >> 7) as usize) % scale.len()] - 12;
+        // Keep a strong downbeat every 4 steps.
+        if i % 4 == 0 {
+            step.gate = true;
+            step.note_offset = 0;
+        }
     }
 }

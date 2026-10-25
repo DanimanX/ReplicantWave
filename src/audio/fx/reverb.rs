@@ -52,6 +52,9 @@ impl CombFilter {
     fn process(&mut self, input: f32) -> f32 {
         let output = self.buffer[self.buf_idx];
         self.filter_store = output * self.damp2 + self.filter_store * self.damp1;
+        if !self.filter_store.is_normal() {
+            self.filter_store = 0.0;
+        }
         self.buffer[self.buf_idx] = input + self.filter_store * self.feedback;
         self.buf_idx += 1;
         if self.buf_idx >= self.buf_size {
@@ -112,6 +115,7 @@ pub struct StereoReverb {
     allpasses_l: Vec<AllpassFilter>,
     allpasses_r: Vec<AllpassFilter>,
     sample_rate: f32,
+    smoothed_mix: f32,
 }
 
 impl Default for StereoReverb {
@@ -124,11 +128,24 @@ impl Default for StereoReverb {
             mix: 0.3,
             last_room_size: -1.0,
             last_damping: -1.0,
-            combs_l: COMB_TUNING_L.iter().map(|&sz| CombFilter::new(sz)).collect(),
-            combs_r: COMB_TUNING_R.iter().map(|&sz| CombFilter::new(sz)).collect(),
-            allpasses_l: ALLPASS_TUNING_L.iter().map(|&sz| AllpassFilter::new(sz)).collect(),
-            allpasses_r: ALLPASS_TUNING_R.iter().map(|&sz| AllpassFilter::new(sz)).collect(),
+            combs_l: COMB_TUNING_L
+                .iter()
+                .map(|&sz| CombFilter::new(sz))
+                .collect(),
+            combs_r: COMB_TUNING_R
+                .iter()
+                .map(|&sz| CombFilter::new(sz))
+                .collect(),
+            allpasses_l: ALLPASS_TUNING_L
+                .iter()
+                .map(|&sz| AllpassFilter::new(sz))
+                .collect(),
+            allpasses_r: ALLPASS_TUNING_R
+                .iter()
+                .map(|&sz| AllpassFilter::new(sz))
+                .collect(),
             sample_rate: 44100.0,
+            smoothed_mix: 0.0,
         };
         rev.update_params();
         rev
@@ -141,10 +158,19 @@ impl StereoReverb {
     }
 
     pub fn reset(&mut self) {
-        for c in &mut self.combs_l { c.reset(); }
-        for c in &mut self.combs_r { c.reset(); }
-        for a in &mut self.allpasses_l { a.reset(); }
-        for a in &mut self.allpasses_r { a.reset(); }
+        for c in &mut self.combs_l {
+            c.reset();
+        }
+        for c in &mut self.combs_r {
+            c.reset();
+        }
+        for a in &mut self.allpasses_l {
+            a.reset();
+        }
+        for a in &mut self.allpasses_r {
+            a.reset();
+        }
+        self.smoothed_mix = 0.0;
     }
 
     pub fn update_params(&mut self) {
@@ -163,11 +189,21 @@ impl StereoReverb {
 
     #[inline(always)]
     pub fn process_sample(&mut self, in_l: f32, in_r: f32) -> (f32, f32) {
-        if !self.enabled || self.mix <= 0.001 {
+        let target_mix = if self.enabled {
+            self.mix.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let coeff = 1.0 - (-1.0 / (0.004 * self.sample_rate)).exp();
+        self.smoothed_mix += (target_mix - self.smoothed_mix) * coeff;
+        if self.smoothed_mix <= 0.0001 && target_mix <= 0.0 {
+            self.smoothed_mix = 0.0;
             return (in_l, in_r);
         }
 
-        if (self.room_size - self.last_room_size).abs() > 0.001 || (self.damping - self.last_damping).abs() > 0.001 {
+        if (self.room_size - self.last_room_size).abs() > 0.001
+            || (self.damping - self.last_damping).abs() > 0.001
+        {
             self.last_room_size = self.room_size;
             self.last_damping = self.damping;
             self.update_params();
@@ -193,9 +229,10 @@ impl StereoReverb {
             out_r = a.process(out_r);
         }
 
-        let wet_1 = self.mix * ((self.width / 2.0) + 0.5);
-        let wet_2 = self.mix * ((1.0 - self.width) / 2.0);
-        let dry = 1.0 - self.mix;
+        let mix = self.smoothed_mix;
+        let wet_1 = mix * ((self.width / 2.0) + 0.5);
+        let wet_2 = mix * ((1.0 - self.width) / 2.0);
+        let dry = 1.0 - mix;
 
         let res_l = out_l * wet_1 + out_r * wet_2 + in_l * dry;
         let res_r = out_r * wet_1 + out_l * wet_2 + in_r * dry;

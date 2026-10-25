@@ -22,6 +22,7 @@ pub struct FxChain {
 impl FxChain {
     pub fn set_sample_rate(&mut self, sr: f32) {
         self.gate.set_sample_rate(sr);
+        self.distortion.set_sample_rate(sr);
         self.chorus.set_sample_rate(sr);
         self.delay.set_sample_rate(sr);
         self.reverb.set_sample_rate(sr);

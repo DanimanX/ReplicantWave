@@ -11,13 +11,14 @@ pub struct StereoDelay {
     pub feedback: f32,      // 0.0 to 0.95
     pub damping: f32,       // 0.0 to 1.0 (lowpass filter on feedback)
     pub ping_pong: bool,
-    pub mix: f32,           // 0.0 to 1.0
+    pub mix: f32, // 0.0 to 1.0
 
     buffer_l: Vec<f32>,
     buffer_r: Vec<f32>,
     write_idx: usize,
     damp_state_l: f32,
     damp_state_r: f32,
+    smoothed_mix: f32,
     sample_rate: f32,
 }
 
@@ -37,6 +38,7 @@ impl Default for StereoDelay {
             write_idx: 0,
             damp_state_l: 0.0,
             damp_state_r: 0.0,
+            smoothed_mix: 0.0,
             sample_rate: 44100.0,
         }
     }
@@ -53,11 +55,20 @@ impl StereoDelay {
         self.write_idx = 0;
         self.damp_state_l = 0.0;
         self.damp_state_r = 0.0;
+        self.smoothed_mix = 0.0;
     }
 
     #[inline(always)]
     pub fn process_sample(&mut self, in_l: f32, in_r: f32, host_bpm: f32) -> (f32, f32) {
-        if !self.enabled || self.mix <= 0.001 {
+        let target_mix = if self.enabled {
+            self.mix.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let coeff = 1.0 - (-1.0 / (0.004 * self.sample_rate)).exp();
+        self.smoothed_mix += (target_mix - self.smoothed_mix) * coeff;
+        if self.smoothed_mix <= 0.0001 && target_mix <= 0.0 {
+            self.smoothed_mix = 0.0;
             return (in_l, in_r);
         }
 
@@ -89,6 +100,14 @@ impl StereoDelay {
         let damp_coeff = (1.0 - self.damping.clamp(0.0, 0.95)).clamp(0.05, 1.0);
         self.damp_state_l += damp_coeff * (wet_l - self.damp_state_l);
         self.damp_state_r += damp_coeff * (wet_r - self.damp_state_r);
+        // Flush denormals: decaying feedback tails otherwise burn CPU on some
+        // x86 hosts and can cause sporadic dropouts.
+        if !self.damp_state_l.is_normal() {
+            self.damp_state_l = 0.0;
+        }
+        if !self.damp_state_r.is_normal() {
+            self.damp_state_r = 0.0;
+        }
 
         let filtered_l = self.damp_state_l;
         let filtered_r = self.damp_state_r;
@@ -110,9 +129,12 @@ impl StereoDelay {
             self.write_idx = 0;
         }
 
-        let dry_gain = 1.0 - self.mix * 0.5;
-        let wet_gain = self.mix;
+        let wet_gain = self.smoothed_mix;
+        let dry_gain = 1.0 - wet_gain * 0.5;
 
-        (in_l * dry_gain + wet_l * wet_gain, in_r * dry_gain + wet_r * wet_gain)
+        (
+            in_l * dry_gain + wet_l * wet_gain,
+            in_r * dry_gain + wet_r * wet_gain,
+        )
     }
 }

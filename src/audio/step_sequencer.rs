@@ -7,12 +7,12 @@ pub const MAX_STEPS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Step {
-    pub note_offset: i8,   // Semitone offset from base note (-24..+24)
-    pub velocity: u8,      // 1..127
-    pub gate: bool,        // Trigger on/off
-    pub slide: bool,       // Legato glide to next step
-    pub accent: bool,      // Velocity & resonance boost
-    pub tie: bool,         // Tie note without retrigger
+    pub note_offset: i8, // Semitone offset from base note (-24..+24)
+    pub velocity: u8,    // 1..127
+    pub gate: bool,      // Trigger on/off
+    pub slide: bool,     // Legato glide to next step
+    pub accent: bool,    // Velocity & resonance boost
+    pub tie: bool,       // Tie note without retrigger
 }
 
 impl Default for Step {
@@ -79,9 +79,9 @@ impl SeqRate {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SeqMode {
-    InternalSynth,  // Triggers internal synth voices directly
-    ModCutoff,      // Modulates filter cutoff
-    ModWTPos,       // Modulates wavetable position
+    InternalSynth, // Triggers internal synth voices directly
+    ModCutoff,     // Modulates filter cutoff
+    ModWTPos,      // Modulates wavetable position
     Off,
 }
 
@@ -113,22 +113,22 @@ pub enum SeqStepEvent {
 #[derive(Clone, Debug)]
 pub struct StepSequencer {
     pub steps: [Step; MAX_STEPS],
-    pub length: usize,       // 1 to 64
+    pub length: usize, // 1 to 64
     pub rate: SeqRate,
-    pub swing: f32,          // 0.0 to 0.75
+    pub swing: f32, // 0.0 to 0.75
     pub running: bool,
-    pub host_sync: bool,     // Auto-trigger when host DAW transport is playing
-    pub key_trigger: bool,   // Retrigger and transpose sequence on incoming MIDI notes
-    pub latch: bool,         // Keep playing even after key release
+    pub host_sync: bool,   // Auto-trigger when host DAW transport is playing
+    pub key_trigger: bool, // Retrigger and transpose sequence on incoming MIDI notes
+    pub latch: bool,       // Keep playing even after key release
     pub mode: SeqMode,
-    pub octave: i8,          // -2 to +2
-    pub root_note: u8,       // Base MIDI note (e.g. 36 = C2)
-    pub internal_bpm: f32,   // Standalone / free tempo
+    pub octave: i8,        // -2 to +2
+    pub root_note: u8,     // Base MIDI note (e.g. 36 = C2)
+    pub internal_bpm: f32, // Standalone / free tempo
 
     pub current_step: usize,
     sample_counter: f32,
     pub step_just_triggered: bool,
-    pub mod_output: f32,     // Current smoothed modulation output (0.0 to 1.0)
+    pub mod_output: f32, // Current smoothed modulation output (0.0 to 1.0)
     current_sounding_note: Option<u8>,
     gate_released: bool,
     first_step_pending: bool,
@@ -142,7 +142,8 @@ impl Default for StepSequencer {
         for (i, step) in steps.iter_mut().enumerate() {
             step.gate = i % 2 == 0 || i % 7 == 0 || i == 15 || i == 31 || i == 47 || i == 63;
             step.accent = i % 4 == 0;
-            step.slide = i == 6 || i == 14 || i == 22 || i == 30 || i == 38 || i == 46 || i == 54 || i == 62;
+            step.slide =
+                i == 6 || i == 14 || i == 22 || i == 30 || i == 38 || i == 46 || i == 54 || i == 62;
             step.note_offset = match i % 8 {
                 0 => 0,
                 1 => 0,
@@ -162,8 +163,8 @@ impl Default for StepSequencer {
             rate: SeqRate::Rate1_16,
             swing: 0.0,
             running: false,
-            host_sync: true,
-            key_trigger: true,
+            host_sync: false, // opt-in only: DAW transport must not start the internal sequencer by itself
+            key_trigger: false, // opt-in only: MIDI notes play the synth, they never start the sequencer
             latch: false,
             mode: SeqMode::InternalSynth,
             octave: 0,
@@ -187,7 +188,9 @@ impl StepSequencer {
     }
 
     pub fn is_active_for_synth(&self) -> bool {
-        self.mode == SeqMode::InternalSynth && (self.running || self.key_trigger)
+        // Only a sequencer that is explicitly running (PLAY button or enabled
+        // DAW sync) owns the voices. Incoming MIDI never sets `running`.
+        self.mode == SeqMode::InternalSynth && self.running
     }
 
     pub fn set_root_note(&mut self, note: u8) {
@@ -211,7 +214,6 @@ impl StepSequencer {
         }
         self.running || (self.host_sync && host_playing)
     }
-
     /// Advance one sample. Returns event: `Trigger`, `Release`, or `None`.
     #[inline(always)]
     pub fn process_sample(&mut self, host_bpm: f32, host_playing: bool) -> SeqStepEvent {
@@ -228,7 +230,8 @@ impl StepSequencer {
             host_bpm
         } else {
             self.internal_bpm
-        }.clamp(30.0, 300.0);
+        }
+        .clamp(30.0, 300.0);
 
         let beats_per_sec = effective_bpm * (1.0 / 60.0);
         let base_step_time = self.rate.to_beat_fraction() / beats_per_sec;
@@ -255,8 +258,9 @@ impl StepSequencer {
             let step = &self.steps[0];
             self.mod_output = (step.note_offset as f32 + 24.0) * (1.0 / 48.0);
             if step.gate {
-                let note_val = (self.root_note as i32 + (self.octave as i32 * 12) + step.note_offset as i32)
-                    .clamp(0, 127) as u8;
+                let note_val =
+                    (self.root_note as i32 + (self.octave as i32 * 12) + step.note_offset as i32)
+                        .clamp(0, 127) as u8;
                 let vel = (step.velocity as f32 * (1.0 / 127.0)).clamp(0.05, 1.0);
                 self.current_sounding_note = Some(note_val);
                 return SeqStepEvent::Trigger {
@@ -294,8 +298,9 @@ impl StepSequencer {
             self.mod_output = (step.note_offset as f32 + 24.0) * (1.0 / 48.0);
 
             if step.gate {
-                let note_val = (self.root_note as i32 + (self.octave as i32 * 12) + step.note_offset as i32)
-                    .clamp(0, 127) as u8;
+                let note_val =
+                    (self.root_note as i32 + (self.octave as i32 * 12) + step.note_offset as i32)
+                        .clamp(0, 127) as u8;
                 let vel = (step.velocity as f32 * (1.0 / 127.0)).clamp(0.05, 1.0);
 
                 self.current_sounding_note = Some(note_val);
@@ -347,7 +352,11 @@ impl StepSequencer {
 
             let note_idx = ((s >> 4) as usize) % scale.len();
             step.note_offset = scale[note_idx] as i8 - 12;
-            step.velocity = if step.accent { 120 } else { 85 + ((s >> 2) % 30) as u8 };
+            step.velocity = if step.accent {
+                120
+            } else {
+                85 + ((s >> 2) % 30) as u8
+            };
             step.tie = i > 0 && !step.gate && (s >> 12) % 100 < 20;
         }
     }
