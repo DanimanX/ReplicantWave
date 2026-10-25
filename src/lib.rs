@@ -79,7 +79,7 @@ impl Plugin for ReplicantWave {
     const VENDOR: &'static str = "DanimanX";
     const URL: &'static str = "https://github.com/DanimanX/ReplicantWave";
     const EMAIL: &'static str = "daniel.rojas@chileatiende.cl";
-    const VERSION: &'static str = "1.1.0";
+    const VERSION: &'static str = "1.1.1";
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
         main_input_channels: None,

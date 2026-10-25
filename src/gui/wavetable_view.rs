@@ -2,6 +2,10 @@
 //!
 //! The editor works from compact pre-sampled thumbnails (`WaveThumb`) so it
 //! never needs to borrow the audio engine's wavetable bank while painting.
+//!
+//! All motion is driven by [`super::time::now_secs`], a monotonic clock with
+//! sub-frame resolution. Do **not** feed `SystemTime` epoch seconds into an
+//! `f32`: at ~1.79e9 s the ULP is ~213 s, which froze every animation.
 
 use super::theme::CyberTheme;
 use crate::audio::wavetable::Wavetable;
@@ -10,7 +14,7 @@ use nih_plug_egui::egui::{
     Ui, Vec2,
 };
 
-const THUMB_SLICES: usize = 10;
+const THUMB_SLICES: usize = 11;
 const THUMB_POINTS: usize = 96;
 
 #[derive(Clone, Debug, Default)]
@@ -18,6 +22,8 @@ pub struct WaveThumb {
     pub name: String,
     pub slices: Vec<Vec<f32>>,
     pub num_frames: usize,
+    /// Largest absolute sample in the table, used to auto-fit the display.
+    pub peak: f32,
 }
 
 impl WaveThumb {
@@ -33,10 +39,16 @@ impl WaveThumb {
             }
             slices.push(pts);
         }
+        let peak = slices
+            .iter()
+            .flat_map(|s| s.iter())
+            .fold(0.0f32, |acc, v| acc.max(v.abs()))
+            .max(0.05);
         Self {
             name: wt.name.clone(),
             slices,
             num_frames: nf,
+            peak,
         }
     }
 
@@ -76,15 +88,16 @@ pub fn draw_wavetable_preview(
     width: f32,
     height: f32,
 ) -> Response {
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f32())
-        .unwrap_or(0.0);
+    let t = super::time::now_secs();
+    // Keep the hologram alive even if the parent stops asking for repaints.
+    ui.ctx().request_repaint();
 
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
-    let painter = ui.painter();
+    // Hard-clip to the viewport: a deep 3D stack must never bleed into the
+    // knobs below the display.
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
 
-    // Recessed CRT well with a cut top-right corner.
+    // Recessed CRT well.
     painter.rect_filled(rect, 2.0, Color32::from_rgb(4, 2, 11));
     painter.rect_stroke(
         rect,
@@ -109,68 +122,118 @@ pub fn draw_wavetable_preview(
         );
     }
 
-    let base_y_front = rect.max.y - 8.0;
-    let base_y_back = rect.min.y + 13.0;
     let margin_x = 8.0;
-    let depth_x = 17.0;
-    let project = |phase: f32, amp: f32, z: f32| -> Pos2 {
-        let persp = 0.80 + 0.20 * z;
-        let baseline = base_y_front - (1.0 - z) * (base_y_front - base_y_back);
-        let start_x = rect.min.x + margin_x + (1.0 - z) * depth_x;
-        let avail_w = (rect.width() - margin_x * 2.0 - depth_x) * persp;
+
+    // Vertical budget: the wave excursion is reserved first, and the slice
+    // baselines share whatever is left. This guarantees every slice fits,
+    // regardless of how hot the wavetable is.
+    let top_y = rect.min.y + 12.0;
+    let bottom_y = rect.max.y - 10.0;
+    let span_y = (bottom_y - top_y).max(24.0);
+    let fit = (1.0 / wt.peak).clamp(0.55, 1.6);
+
+    // --- Orbital camera -----------------------------------------------------
+    // Slow cinematic breathing so the stack reads as a volume, not a still.
+    let cam_yaw = (t * 0.62).sin() * 9.0; // horizontal parallax in px
+    let cam_pitch = 0.5 + 0.5 * (t * 0.44 + 1.1).sin(); // 0..1 depth tilt
+    let depth_x = 15.0 + cam_pitch * 9.0;
+
+    // Amplitudes peak at <= 1.0 by construction; the pitch breathing only ever
+    // shrinks the excursion so the reserved budget still holds.
+    let amp_budget = (span_y * 0.36 * fit).min(span_y * 0.44);
+    let band = (span_y - 2.0 * amp_budget).max(10.0);
+    let y_front = top_y + amp_budget + band;
+    let y_back = top_y + amp_budget;
+    let amp_base = amp_budget * (0.90 + 0.10 * cam_pitch);
+
+    let project = move |phase: f32, amp: f32, z: f32| -> Pos2 {
+        let persp = 0.78 + 0.22 * z;
+        let baseline = y_back + z * (y_front - y_back);
+        let start_x = rect.min.x + margin_x + (1.0 - z) * depth_x + cam_yaw * (1.0 - z);
+        let avail_w =
+            (rect.width() - margin_x * 2.0 - depth_x) * persp * (1.0 + 0.04 * cam_yaw / 9.0);
         let x = start_x + phase * avail_w;
-        let amp_scale = rect.height() * 0.27 * persp;
-        pos2(x, baseline - amp * amp_scale)
+        pos2(x, baseline - amp.clamp(-1.05, 1.05) * amp_base * persp)
     };
 
-    let scan_z = (t * 0.8).sin().abs() * 0.85 + 0.05;
+    // Traveling depth scan (triangle so it sweeps back and forth without
+    // teleporting at the turn-around).
+    let scan_phase = (t * 0.42).fract();
+    let scan_z = if scan_phase < 0.5 {
+        scan_phase * 2.0
+    } else {
+        (1.0 - scan_phase) * 2.0
+    };
+
     let mut slices: Vec<Vec<Pos2>> = Vec::with_capacity(THUMB_SLICES);
 
     for s in 0..THUMB_SLICES {
         let z = s as f32 / (THUMB_SLICES - 1) as f32;
         let dist = (z - scan_z).abs();
-        let lit = (1.0 - dist / 0.25).max(0.0);
-        let alpha = (18.0 + z * 70.0 + lit * 110.0).min(230.0) as u8;
-        let tint = 0.35 + z * 0.65;
+        let lit = (1.0 - dist / 0.22).max(0.0);
+        let alpha = (22.0 + z * 62.0 + lit * 130.0).min(240.0) as u8;
+        let tint = 0.34 + z * 0.66 + lit * 0.25;
         let col = Color32::from_rgba_unmultiplied(
             (color.r() as f32 * tint).min(255.0) as u8,
             (color.g() as f32 * tint).min(255.0) as u8,
             (color.b() as f32 * tint).min(255.0) as u8,
             alpha,
         );
+
+        // Each slice undulates on its own phase so the stack visibly breathes.
+        let slice_phase = z * 5.2 + s as f32 * 0.4;
         let pts: Vec<Pos2> = (0..THUMB_POINTS)
             .map(|i| {
                 let phase = i as f32 / (THUMB_POINTS - 1) as f32;
-                let ripple = 1.0 + 0.05 * (phase * 15.0 - t * 2.8 + z * 6.0).sin();
-                project(phase, wt.sample_slice_public(s, phase) * ripple, z)
+                let ripple = 1.0 + 0.085 * (phase * 12.0 - t * 2.4 + slice_phase).sin();
+                let drift = 0.022 * (phase * 5.0 + t * 1.3 + slice_phase).sin();
+                project(phase, wt.sample_slice_public(s, phase) * ripple + drift, z)
             })
             .collect();
+
         for i in 0..pts.len().saturating_sub(1) {
             painter.line_segment(
                 [pts[i], pts[i + 1]],
-                Stroke::new(if lit > 0.2 { 1.4_f32 } else { 0.9_f32 }, col),
+                Stroke::new(if lit > 0.25 { 1.5_f32 } else { 0.9_f32 }, col),
             );
+        }
+        // Glowing sweep band around the scan plane.
+        if lit > 0.3 {
+            for i in 0..pts.len().saturating_sub(1) {
+                painter.line_segment(
+                    [pts[i], pts[i + 1]],
+                    Stroke::new(4.0_f32, CyberTheme::alpha(color, (lit * 45.0) as u8)),
+                );
+            }
         }
         slices.push(pts);
     }
 
     // Longitudinal ribbons give the stack a holographic volume.
-    for &idx in &[THUMB_POINTS / 4, THUMB_POINTS / 2, 3 * THUMB_POINTS / 4] {
+    for &idx in &[
+        THUMB_POINTS / 5,
+        2 * THUMB_POINTS / 5,
+        THUMB_POINTS / 2,
+        3 * THUMB_POINTS / 5,
+        4 * THUMB_POINTS / 5,
+    ] {
         for s in 0..slices.len().saturating_sub(1) {
             painter.line_segment(
                 [slices[s][idx], slices[s + 1][idx]],
-                Stroke::new(0.7_f32, CyberTheme::alpha(color, 34)),
+                Stroke::new(0.7_f32, CyberTheme::alpha(color, 30)),
             );
         }
     }
 
-    // Active morphed wave.
+    // --- Active morphed wave -------------------------------------------------
     let z_active = 1.0 - position.clamp(0.0, 1.0);
     let active: Vec<Pos2> = (0..THUMB_POINTS)
         .map(|i| {
             let phase = i as f32 / (THUMB_POINTS - 1) as f32;
-            let pulse = 1.0 + 0.035 * (phase * 17.0 - t * 3.6).sin();
-            project(phase, wt.sample(position, phase) * pulse, z_active)
+            // Faster, deeper pulse so the focused wave clearly moves.
+            let pulse = 1.0 + 0.07 * (phase * 15.0 - t * 3.4).sin();
+            let drift = 0.018 * (phase * 6.0 + t * 1.9).sin();
+            project(phase, wt.sample(position, phase) * pulse + drift, z_active)
         })
         .collect();
     let baseline: Vec<Pos2> = (0..THUMB_POINTS)
@@ -179,7 +242,8 @@ pub fn draw_wavetable_preview(
 
     // Filled translucent ribbon under the active trace.
     let mut mesh = Mesh::default();
-    let top = CyberTheme::alpha(color, 100);
+    let energy = 0.5 + 0.5 * (t * 2.2).sin();
+    let top = CyberTheme::alpha(color, (80.0 + energy * 55.0) as u8);
     let bot = CyberTheme::alpha(color, 8);
     for i in 0..THUMB_POINTS.saturating_sub(1) {
         let base = (i * 4) as u32;
@@ -214,6 +278,19 @@ pub fn draw_wavetable_preview(
             [pos2(peak.x, peak.y - d), pos2(peak.x, peak.y + d)],
             Stroke::new(1.2_f32, Color32::WHITE),
         );
+    }
+
+    // Energy orb orbiting the active crest: unmistakable motion cue.
+    let orb_phase = (t * 0.55).fract();
+    let orb_idx = (orb_phase * (active.len() - 1) as f32) as usize;
+    if let Some(orb) = active.get(orb_idx) {
+        painter.circle_filled(*orb, 2.4, Color32::WHITE);
+        painter.circle_stroke(
+            *orb,
+            5.5,
+            Stroke::new(1.2_f32, CyberTheme::alpha(color, 210)),
+        );
+        painter.circle_filled(*orb, 7.5, CyberTheme::alpha(color, 22));
     }
 
     // Position rail.

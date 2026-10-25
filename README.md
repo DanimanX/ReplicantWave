@@ -83,7 +83,8 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step neon step-matrix 
 ### 🔮 3D GPU-Accelerated Animated Holographic Wavetable Engine
 - **Orbital 3D Perspective Waterfall Mesh**: Dynamic 3D undulating terrain rendered directly via hardware GPU triangles (`egui::Mesh`) with depth fog, dynamic perspective tilt, and wireframe ribbons.
 - **Sweeping Depth Laser Scanner**: Sweeps back and forth through depth, casting glowing highlights on terrain slices.
-- **Peak Marker & Depth Scan**: Real-time peak marker and a sweeping depth highlight synchronized to the wavetable frame index at 60 FPS.
+- **Living hologram**: the wavetable views animate continuously at 60 FPS — orbital camera breathing, a traveling depth scan, per-slice ripple, a pulsing active wave, a peak marker and an orbiting energy orb. The display auto-fits the hottest wavetable so no trace is ever clipped by the viewport.
+- **Monotonic GUI clock**: animation uses a process-local `Instant` (`gui::time`), never `SystemTime` epoch seconds. An `f32` cannot resolve ~213 s steps at a Unix timestamp, which previously froze every animation.
 
 ### ⚡ 64-Step Neon Step Matrix
 - **Full-width deck** with transport, mode, length and rate always visible.

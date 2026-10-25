@@ -79,10 +79,8 @@ pub fn draw_oscilloscope(ui: &mut Ui, samples: &[f32], width: f32, height: f32) 
     );
 
     // High-resolution clock for living vector trace animation
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f32())
-        .unwrap_or(0.0);
+    let t = super::time::now_secs();
+    ui.ctx().request_repaint();
 
     // 4. Waveform Coordinates
     let num_points = 120;

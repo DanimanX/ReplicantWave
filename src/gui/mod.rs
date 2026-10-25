@@ -9,6 +9,7 @@ pub mod model;
 pub mod oscilloscope;
 pub mod sequencer_view;
 pub mod theme;
+pub mod time;
 pub mod wavetable_view;
 
 use crate::audio::filter::FilterType;
@@ -114,12 +115,11 @@ impl GuiSharedState {
 }
 
 pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f32())
-        .unwrap_or(0.0);
+    let t = time::now_secs();
 
-    // 60 FPS for the animated scopes, without starving the audio thread.
+    // 60 FPS for the animated scopes and wavetables, without starving the audio
+    // thread. `request_repaint_after` is a floor; views that need smoother
+    // motion also call `request_repaint` themselves.
     ui.ctx().request_repaint_after(Duration::from_millis(16));
 
     // Apply a queued preset with a non-blocking lock. Never hold the engine
