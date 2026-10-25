@@ -4,9 +4,9 @@ pub mod params;
 pub mod presets;
 
 use audio::SynthEngine;
-use gui::{render_cyberpunk_gui, GuiSharedState};
+use gui::{render_cyberpunk_gui, GuiSharedState, MIN_EDITOR_HEIGHT, MIN_EDITOR_WIDTH};
 use nih_plug::prelude::*;
-use nih_plug_egui::create_egui_editor;
+use nih_plug_egui::{create_egui_editor, egui::vec2, resizable_window::ResizableWindow};
 use params::ReplicantWaveParams;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -35,7 +35,7 @@ impl Plugin for ReplicantWave {
     const VENDOR: &'static str = "DanimanX";
     const URL: &'static str = "https://github.com/DanimanX/ReplicantWave";
     const EMAIL: &'static str = "daniel.rojas@chileatiende.cl";
-    const VERSION: &'static str = "1.2.3";
+    const VERSION: &'static str = "1.2.4";
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
         main_input_channels: None,
@@ -59,13 +59,20 @@ impl Plugin for ReplicantWave {
         let params = self.params.clone();
 
         create_egui_editor(
-            editor_state,
+            editor_state.clone(),
             GuiSharedState::new(engine, params),
             |_, _| {},
             move |egui_ctx, setter, state| {
-                nih_plug_egui::egui::CentralPanel::default().show(egui_ctx, |ui| {
-                    render_cyberpunk_gui(ui, setter, state);
-                });
+                // The HUD below is laid out proportionally, so it follows whatever
+                // size the window has. Dragging the grip in the bottom-right corner
+                // requests a new size through the host (`GuiContext::request_resize`),
+                // and `EguiState` (a `#[persist]` field on the params) keeps the last
+                // size with the session.
+                ResizableWindow::new("replicantwave-editor")
+                    .min_size(vec2(MIN_EDITOR_WIDTH, MIN_EDITOR_HEIGHT))
+                    .show(egui_ctx, editor_state.as_ref(), |ui| {
+                        render_cyberpunk_gui(ui, setter, state);
+                    });
             },
         )
     }

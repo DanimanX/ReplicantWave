@@ -91,6 +91,7 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step neon step-matrix 
 - **Rotary knobs**: 11 machined tick marks, dark glass cap, glowing value arc, bright needle and hover readout. Mouse-wheel support, fine-tune drag (`Shift`), and double-click reset.
 - **HUD sliders**: compact glowing horizontal controls for the FX rack, with live value readouts.
 - **Cut-corner glass panels**, animated scanlines, a synthwave floor grid and neon corner brackets — a pure NIGHT CITY HUD, no hardware screws or patch cables.
+- **Resizable editor**: drag the neon grip in the bottom-right corner (the host permitting) and the whole HUD re-flows — every band is measured from the window rect, from the 1180×800 floor upwards. The chosen size is persisted with the session.
 
 ### 🔮 3D GPU-Accelerated Animated Holographic Wavetable Engine
 - **Orbital 3D Perspective Waterfall Mesh**: Dynamic 3D undulating terrain rendered directly via hardware GPU triangles (`egui::Mesh`) with depth fog, dynamic perspective tilt, and wireframe ribbons.

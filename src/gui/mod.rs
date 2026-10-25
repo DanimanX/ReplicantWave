@@ -40,6 +40,85 @@ use std::time::Duration;
 
 pub const DONATION_URL: &str = "https://paypal.me/DanimanX?locale.x=en_US&country.x=CL";
 
+/// Smallest editor size, in logical pixels, that the HUD is guaranteed to fit
+/// in. The `ResizableWindow` grip refuses to shrink below this; every band is
+/// derived from the rect the host actually gave us, so larger sizes simply get
+/// more room instead of being letterboxed.
+pub const MIN_EDITOR_WIDTH: f32 = 1180.0;
+pub const MIN_EDITOR_HEIGHT: f32 = 800.0;
+
+const HUD_INSET: f32 = 10.0;
+const TOP_BAR_H: f32 = 54.0;
+const CATEGORY_STRIP_H: f32 = 30.0;
+const BAND_GAP: f32 = 6.0;
+const CARD_GAP: f32 = 8.0;
+
+/// Rect-independent breakdown of the HUD for one editor size.
+///
+/// The editor is resizable, so nothing below may depend on a fixed design size.
+/// Every band is derived from the size the host actually gave us, and keeping
+/// that arithmetic in one pure place means the resize behaviour can be unit
+/// tested without opening a window.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HudLayout {
+    pub top_h: f32,
+    pub strip_h: f32,
+    pub band_gap: f32,
+    pub main_h: f32,
+    pub seq_h: f32,
+    pub card_gap: f32,
+    pub left_w: f32,
+    pub right_w: f32,
+    pub scope_h: f32,
+    pub env_h: f32,
+    pub fx_h: f32,
+    /// Size of the content inside the inset border, handy for the tests.
+    pub root_w: f32,
+    pub root_h: f32,
+}
+
+impl HudLayout {
+    pub(crate) fn for_size(width: f32, height: f32) -> Self {
+        let root_w = (width - HUD_INSET * 2.0).max(0.0);
+        let root_h = (height - HUD_INSET * 2.0).max(0.0);
+
+        // Header, category strip and sequencer keep a natural size; the main
+        // area takes the rest so the knob cards stay usable at any height.
+        let stacked = (root_h - TOP_BAR_H - CATEGORY_STRIP_H - BAND_GAP * 3.0).max(0.0);
+        let seq_h = (stacked * 0.30).clamp(210.0, 300.0).min(stacked);
+        let main_h = (stacked - seq_h).max(0.0);
+
+        // Just under half the width, but never so narrow that the knob rows
+        // wrap, and never so wide that the monitor column gets crushed.
+        let left_w = (root_w * 0.47).clamp(540.0, 900.0).min(root_w);
+        let right_w = (root_w - left_w - CARD_GAP).max(0.0);
+
+        // The monitor column scales with the main area; the FX rack absorbs
+        // whatever is left below the envelopes (it has the most rows).
+        let scope_h = (main_h * 0.30).clamp(120.0, 300.0).min(main_h);
+        let env_h = (main_h * 0.32)
+            .clamp(130.0, 230.0)
+            .min((main_h - scope_h).max(0.0));
+        let fx_h = (main_h - scope_h - env_h - CARD_GAP * 2.0).max(0.0);
+
+        Self {
+            top_h: TOP_BAR_H,
+            strip_h: CATEGORY_STRIP_H,
+            band_gap: BAND_GAP,
+            main_h,
+            seq_h,
+            card_gap: CARD_GAP,
+            left_w,
+            right_w,
+            scope_h,
+            env_h,
+            fx_h,
+            root_w,
+            root_h,
+        }
+    }
+}
+
 const CATEGORIES: [&str; 9] = [
     "ALL", "BASS", "PAD", "DRONE", "LEAD", "ARP", "SEQ", "FX", "OTHER",
 ];
@@ -216,25 +295,26 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, setter: &ParamSetter, state: &mut GuiSh
     let full = ui.max_rect();
     CyberTheme::draw_backdrop(ui.painter(), full, t);
 
-    let root = full.shrink(10.0);
-    let top_h = 54.0;
-    let strip_h = 30.0;
-    let seq_h = 260.0;
-    let gap = 6.0;
-    let main_h = (root.height() - top_h - strip_h - seq_h - gap * 3.0).max(420.0);
+    let layout = HudLayout::for_size(full.width(), full.height());
+    // Same arithmetic the tests pin down: the root rect is the layout's own
+    // content box, so bands and root can never disagree.
+    let root = Rect::from_min_size(
+        pos2(full.min.x + HUD_INSET, full.min.y + HUD_INSET),
+        vec2(layout.root_w, layout.root_h),
+    );
 
-    let top_rect = Rect::from_min_size(root.min, vec2(root.width(), top_h));
+    let top_rect = Rect::from_min_size(root.min, vec2(root.width(), layout.top_h));
     let strip_rect = Rect::from_min_size(
-        pos2(root.min.x, top_rect.max.y + gap),
-        vec2(root.width(), strip_h),
+        pos2(root.min.x, top_rect.max.y + layout.band_gap),
+        vec2(root.width(), layout.strip_h),
     );
     let main_rect = Rect::from_min_size(
-        pos2(root.min.x, strip_rect.max.y + gap),
-        vec2(root.width(), main_h),
+        pos2(root.min.x, strip_rect.max.y + layout.band_gap),
+        vec2(root.width(), layout.main_h),
     );
     let seq_rect = Rect::from_min_size(
-        pos2(root.min.x, main_rect.max.y + gap),
-        vec2(root.width(), seq_h),
+        pos2(root.min.x, main_rect.max.y + layout.band_gap),
+        vec2(root.width(), layout.seq_h),
     );
 
     draw_top_bar(ui, setter, top_rect, state, active_voices, t);
@@ -247,6 +327,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, setter: &ParamSetter, state: &mut GuiSh
         &scope_samples,
         active_voices,
         t,
+        &layout,
     );
 
     let params = state.params.clone();
@@ -379,8 +460,14 @@ fn draw_top_bar(
         CyberTheme::TEXT_DIM,
     );
 
+    let right = rect.max.x - 18.0;
+    // The preset browser lives between the wordmark and the right-hand cluster
+    // and shrinks instead of sliding underneath the donate button on narrow
+    // editors.
     let bx = rect.min.x + 290.0;
     let by = rect.min.y + 9.0;
+    let cluster_w = (right - 430.0 - bx - 12.0).clamp(220.0, 470.0);
+    let combo_w = (cluster_w - 190.0).clamp(96.0, 250.0);
     let indices = state.filtered_presets();
     let pos = indices
         .iter()
@@ -390,7 +477,7 @@ fn draw_top_bar(
     let mut clicked_preset: Option<usize> = None;
     ui.allocate_new_ui(
         UiBuilder::new()
-            .max_rect(Rect::from_min_size(pos2(bx, by), vec2(470.0, 38.0)))
+            .max_rect(Rect::from_min_size(pos2(bx, by), vec2(cluster_w, 38.0)))
             .layout(Layout::left_to_right(Align::Center)),
         |ui| {
             if ui
@@ -418,7 +505,7 @@ fn draw_top_bar(
             );
             nih_plug_egui::egui::ComboBox::from_id_salt("night_city_preset")
                 .selected_text(RichText::new(name).color(color).monospace().size(11.0))
-                .width(250.0)
+                .width(combo_w)
                 .show_ui(ui, |ui| {
                     for &idx in &indices {
                         let pr = &state.presets[idx];
@@ -447,7 +534,6 @@ fn draw_top_bar(
         state.queue_preset(idx);
     }
 
-    let right = rect.max.x - 18.0;
     let master_rect = Rect::from_min_size(pos2(right - 210.0, rect.min.y + 5.0), vec2(48.0, 44.0));
     ui.allocate_new_ui(UiBuilder::new().max_rect(master_rect), |ui| {
         knob_f(
@@ -610,13 +696,14 @@ fn draw_main_area(
     scope: &[f32],
     active_voices: usize,
     t: f32,
+    layout: &HudLayout,
 ) {
-    let gap = 8.0;
-    let left_w = 610.0;
+    let gap = layout.card_gap;
+    let left_w = layout.left_w;
     let card_w = (left_w - gap) * 0.5;
     let row_h = (rect.height() - gap) * 0.5;
     let right_x = rect.min.x + left_w + gap;
-    let right_w = rect.max.x - right_x;
+    let right_w = layout.right_w;
 
     let params = state.params.clone();
     let names: Vec<&str> = state.wave_names.iter().map(|s| s.as_str()).collect();
@@ -666,8 +753,8 @@ fn draw_main_area(
         t,
     );
 
-    let scope_h = 158.0;
-    let env_h = 172.0;
+    let scope_h = layout.scope_h;
+    let env_h = layout.env_h;
     let scope_rect = Rect::from_min_size(pos2(right_x, rect.min.y), vec2(right_w, scope_h));
     draw_scope_card(ui, scope_rect, scope, active_voices, t);
 
@@ -697,10 +784,7 @@ fn draw_main_area(
     );
 
     let fx_y = env_y + env_h + gap;
-    let fx_rect = Rect::from_min_size(
-        pos2(right_x, fx_y),
-        vec2(right_w, (rect.max.y - fx_y).max(120.0)),
-    );
+    let fx_rect = Rect::from_min_size(pos2(right_x, fx_y), vec2(right_w, layout.fx_h));
     draw_fx_card(
         ui,
         setter,
@@ -740,13 +824,16 @@ fn draw_osc_card(
 
         let table = osc.table.value().clamp(0, names.len() as i32 - 1) as usize;
         if let Some(thumb) = thumbs.get(table % thumbs.len().max(1)) {
+            // Grow with the card, and give the two knob rows back their space
+            // first when the editor gets short.
+            let preview_h = (ui.available_height() - 96.0).clamp(56.0, 150.0);
             draw_wavetable_preview(
                 ui,
                 thumb,
                 osc.position.value(),
                 color,
                 ui.available_width(),
-                96.0,
+                preview_h,
             );
         }
 
@@ -1069,8 +1156,9 @@ fn draw_env_card(
     t: f32,
 ) {
     panel(ui, rect, color, index, title, t, |ui| {
+        let curve_h = (ui.available_height() - 52.0).clamp(36.0, 110.0);
         let (curve_rect, _) =
-            ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::hover());
+            ui.allocate_exact_size(vec2(ui.available_width(), curve_h), Sense::hover());
         draw_adsr(
             ui,
             curve_rect,
@@ -1363,6 +1451,73 @@ fn randomize_steps(steps: &mut [Step], seed: u32) {
         if i % 4 == 0 {
             step.gate = true;
             step.note_offset = 0;
+        }
+    }
+}
+
+#[cfg(test)]
+mod resize_tests {
+    use super::{HudLayout, MIN_EDITOR_HEIGHT, MIN_EDITOR_WIDTH};
+
+    /// Sizes the resize grip and the host can hand us: the enforced minimum,
+    /// the factory default, and a large full-screen editor.
+    const SIZES: [(f32, f32); 3] = [
+        (MIN_EDITOR_WIDTH, MIN_EDITOR_HEIGHT),
+        (1300.0, 920.0),
+        (2560.0, 1440.0),
+    ];
+
+    #[test]
+    fn every_band_stays_usable_at_every_size() {
+        for (w, h) in SIZES {
+            let l = HudLayout::for_size(w, h);
+            let at = format!("{w}x{h}");
+            assert!(l.main_h >= 440.0, "{at}: main area collapsed to {}", l.main_h);
+            assert!(l.seq_h >= 210.0, "{at}: sequencer deck collapsed to {}", l.seq_h);
+            assert!(l.left_w >= 540.0, "{at}: knob column collapsed to {}", l.left_w);
+            assert!(l.right_w >= 560.0, "{at}: monitor column collapsed to {}", l.right_w);
+            assert!(l.scope_h >= 120.0, "{at}: scope collapsed to {}", l.scope_h);
+            assert!(l.env_h >= 130.0, "{at}: envelopes collapsed to {}", l.env_h);
+            assert!(l.fx_h >= 140.0, "{at}: FX rack collapsed to {}", l.fx_h);
+        }
+    }
+
+    #[test]
+    fn bands_never_overflow_the_window() {
+        for (w, h) in SIZES {
+            let l = HudLayout::for_size(w, h);
+            let at = format!("{w}x{h}");
+
+            let stacked = l.top_h + l.strip_h + l.main_h + l.seq_h + l.band_gap * 3.0;
+            assert!(stacked <= l.root_h + 0.01, "{at}: rows use {stacked} > {}", l.root_h);
+
+            let columns = l.left_w + l.right_w + l.card_gap;
+            assert!(columns <= l.root_w + 0.01, "{at}: columns use {columns} > {}", l.root_w);
+
+            let monitor = l.scope_h + l.env_h + l.fx_h + l.card_gap * 2.0;
+            assert!(monitor <= l.main_h + 0.01, "{at}: monitor uses {monitor} > {}", l.main_h);
+        }
+    }
+
+    #[test]
+    fn growing_the_window_never_shrinks_a_band() {
+        let sizes = [
+            (MIN_EDITOR_WIDTH, MIN_EDITOR_HEIGHT),
+            (1300.0, 920.0),
+            (1600.0, 1000.0),
+            (1920.0, 1200.0),
+            (2560.0, 1440.0),
+        ];
+        let layouts: Vec<HudLayout> = sizes.iter().map(|&(w, h)| HudLayout::for_size(w, h)).collect();
+
+        for pair in layouts.windows(2) {
+            assert!(pair[1].main_h >= pair[0].main_h - 0.01);
+            assert!(pair[1].seq_h >= pair[0].seq_h - 0.01);
+            assert!(pair[1].left_w >= pair[0].left_w - 0.01);
+            assert!(pair[1].right_w >= pair[0].right_w - 0.01);
+            assert!(pair[1].scope_h >= pair[0].scope_h - 0.01);
+            assert!(pair[1].env_h >= pair[0].env_h - 0.01);
+            assert!(pair[1].fx_h >= pair[0].fx_h - 0.01);
         }
     }
 }
