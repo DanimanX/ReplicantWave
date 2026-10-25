@@ -13,7 +13,7 @@
 
 <br/>
 
-**▶ [Watch the 66-second Cyberpunk Darkwave promo video](assets/replicantwave_promo.mp4)** — 1080p30, every sound rendered by the engine itself.
+**▶ [Watch the 66-second 3D Oscillators & Midtempo Cyberpunk promo video](assets/replicantwave_promo.mp4)** — 1080p30, showcasing the 3D holographic wavetable engine.
 
 <br/>
 
@@ -42,7 +42,7 @@ There is also a direct **☕ DONATE** button in the top navigation bar of the pl
 
 **ReplicantWave** is a next-generation Rust-powered clone and reimagining of the Wavetable architecture, infused with a **Cyberpunk 2077 / Neon Noir** aesthetic and engineered for ultra-low CPU utilization.
 
-Featuring **2 multi-frame wavetable oscillators**, a **64-step neon step-matrix sequencer**, full **Cytomic ZDF multimode filtering**, a multi-algorithm **Cyber Distortion engine**, a live phosphor oscilloscope, a live ZDF filter response, and **38 factory presets** covering bass, pads, drones, leads, arps, sequences and FX for dark electronic music.
+Featuring **2 multi-frame wavetable oscillators**, a **64-step neon step-matrix sequencer**, full **Cytomic ZDF multimode filtering**, a multi-algorithm **Cyber Distortion engine**, a live phosphor oscilloscope, a live ZDF filter response, and **42 factory presets** covering bass, pads, drones, leads, arps, sequences and FX for dark electronic music.
 
 ---
 

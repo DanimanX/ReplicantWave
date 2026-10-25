@@ -66,6 +66,11 @@ pub fn get_factory_presets() -> Vec<SynthPreset> {
         // FX
         preset_emp_burst(),
         preset_cyberpsychosis(),
+        // ---- MIDTEMPO CYBERPUNK PACK (Zeneth / Reinelex style) ----
+        preset_zeneth_cyber_midtempo(),
+        preset_reinelex_neuro_reese(),
+        preset_cyberpunk_combat_lead(),
+        preset_night_city_midtempo_chug(),
     ]
 }
 
@@ -2616,5 +2621,162 @@ fn preset_cyberpsychosis() -> SynthPreset {
     p.reverb_size = 0.8;
     p.reverb_mix = 0.4;
     p.seq_mode = 3;
+    p
+}
+
+fn preset_zeneth_cyber_midtempo() -> SynthPreset {
+    let mut p = base_preset(
+        "Zeneth Cyber Midtempo",
+        "Bass",
+        "Midtempo bass growl with wavefolded neuro harmonics and aggressive drive.",
+    );
+    p.osc1_table = 1;
+    p.osc1_unison = 8;
+    p.osc1_pos = 0.45;
+    p.osc1_detune = 0.35;
+    p.osc1_spread = 0.95;
+    p.osc1_level = 0.85;
+    p.osc2_table = 4;
+    p.osc2_enabled = true;
+    p.osc2_tune = -12.0;
+    p.osc2_pos = 0.7;
+    p.osc2_level = 0.65;
+    p.sub_enabled = true;
+    p.sub_level = 0.85;
+    p.filter_type = 0;
+    p.filter_cutoff = 850.0;
+    p.filter_reso = 0.55;
+    p.filter_drive = 2.8;
+    p.filter_env_amount = 0.65;
+    p.amp_attack = 0.005;
+    p.amp_decay = 0.28;
+    p.amp_sustain = 0.45;
+    p.amp_release = 0.18;
+    p.filter_attack = 0.005;
+    p.filter_decay = 0.24;
+    p.filter_sustain = 0.20;
+    p.filter_release = 0.18;
+    p.dist_enabled = true;
+    p.dist_mode = 2;
+    p.dist_amount = 0.75;
+    p.dist_mix = 0.85;
+    p.delay_enabled = true;
+    p.delay_fb = 0.35;
+    p.delay_mix = 0.22;
+    p.reverb_enabled = true;
+    p.reverb_size = 0.65;
+    p.reverb_mix = 0.20;
+    p
+}
+
+fn preset_reinelex_neuro_reese() -> SynthPreset {
+    let mut p = base_preset(
+        "Reinelex Neuro Reese",
+        "Bass",
+        "Wide, menacing midtempo Reese bass with massive detune and analog filter saturation.",
+    );
+    p.osc1_table = 1;
+    p.osc1_unison = 8;
+    p.osc1_pos = 0.6;
+    p.osc1_detune = 0.48;
+    p.osc1_spread = 1.0;
+    p.osc1_level = 0.8;
+    p.osc2_table = 7;
+    p.osc2_enabled = true;
+    p.osc2_tune = 0.0;
+    p.osc2_unison = 4;
+    p.osc2_pos = 0.3;
+    p.osc2_detune = 0.25;
+    p.osc2_level = 0.6;
+    p.filter_type = 0;
+    p.filter_cutoff = 1200.0;
+    p.filter_reso = 0.38;
+    p.filter_drive = 2.2;
+    p.filter_env_amount = 0.3;
+    p.amp_attack = 0.01;
+    p.amp_decay = 0.6;
+    p.amp_sustain = 0.75;
+    p.amp_release = 0.35;
+    p.chorus_enabled = true;
+    p.chorus_rate = 0.4;
+    p.chorus_depth = 6.5;
+    p.chorus_mix = 0.6;
+    p.dist_enabled = true;
+    p.dist_mode = 0;
+    p.dist_amount = 0.65;
+    p.dist_mix = 0.7;
+    p
+}
+
+fn preset_cyberpunk_combat_lead() -> SynthPreset {
+    let mut p = base_preset(
+        "Cyberpunk 2077 Combat Lead",
+        "Lead",
+        "Hard-synced screamer lead with ping-pong delay and biting laser resonance.",
+    );
+    p.osc1_table = 0;
+    p.osc1_pos = 0.8;
+    p.osc1_unison = 3;
+    p.osc1_detune = 0.2;
+    p.osc1_spread = 0.8;
+    p.osc1_level = 0.85;
+    p.osc2_table = 3;
+    p.osc2_enabled = true;
+    p.osc2_tune = 7.0;
+    p.osc2_pos = 0.65;
+    p.osc2_unison = 2;
+    p.osc2_level = 0.75;
+    p.filter_type = 0;
+    p.filter_cutoff = 4200.0;
+    p.filter_reso = 0.62;
+    p.filter_drive = 1.8;
+    p.amp_attack = 0.005;
+    p.amp_decay = 0.35;
+    p.amp_sustain = 0.65;
+    p.amp_release = 0.3;
+    p.dist_enabled = true;
+    p.dist_mode = 1;
+    p.dist_amount = 0.7;
+    p.dist_mix = 0.65;
+    p.delay_enabled = true;
+    p.delay_fb = 0.45;
+    p.delay_mix = 0.35;
+    p.reverb_enabled = true;
+    p.reverb_size = 0.85;
+    p.reverb_mix = 0.35;
+    p
+}
+
+fn preset_night_city_midtempo_chug() -> SynthPreset {
+    let mut p = base_preset(
+        "Night City Midtempo Chug",
+        "Bass",
+        "Punchy, stomping 16th midtempo electro bass with snappy transient and deep sub.",
+    );
+    p.osc1_table = 4;
+    p.osc1_pos = 0.3;
+    p.osc1_unison = 4;
+    p.osc1_detune = 0.28;
+    p.osc1_spread = 0.8;
+    p.osc1_level = 0.9;
+    p.sub_enabled = true;
+    p.sub_level = 0.9;
+    p.filter_type = 0;
+    p.filter_cutoff = 650.0;
+    p.filter_reso = 0.45;
+    p.filter_drive = 2.5;
+    p.filter_env_amount = 0.75;
+    p.amp_attack = 0.003;
+    p.amp_decay = 0.18;
+    p.amp_sustain = 0.25;
+    p.amp_release = 0.12;
+    p.filter_attack = 0.003;
+    p.filter_decay = 0.16;
+    p.filter_sustain = 0.15;
+    p.filter_release = 0.12;
+    p.dist_enabled = true;
+    p.dist_mode = 2;
+    p.dist_amount = 0.8;
+    p.dist_mix = 0.8;
     p
 }

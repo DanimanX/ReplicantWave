@@ -11,3 +11,4 @@ Cargo.lock
 
 # local codewhale session state
 .codewhale/
+__pycache__/

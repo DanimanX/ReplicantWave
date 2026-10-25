@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Build the ReplicantWave Cyberpunk Darkwave Promo Video (1920x1080 @ 30fps).
+"""Build the ReplicantWave Cyberpunk Midtempo Promo Video (1920x1080 @ 30fps).
 
-Composes a high-energy, cinematic demo video showcasing the capabilities
-of the ReplicantWave synthesizer with an authentic Cyberpunk Darkwave score:
-- Dual Wavetable Oscillators with 8 morphing tables, unison, & phase warp
-- Analog-modeled Zero-Delay Feedback (ZDF) multimode filter
-- Integrated 64-step neon matrix sequencer with slide & accent
-- Cyber FX rack: Hard distortion, chorus, ping-pong delay, shimmer reverb
-- 84 host-automatable parameters & 38 factory presets
-- Real-time reactive vector oscilloscope, spectrum analyzer & animated sequencer LEDs
+Showcases the 3D Holographic Oscillator Effect and a crushing Midtempo Cyberpunk
+soundtrack (105 BPM in F minor, inspired by Zeneth / Reinelex Music mixes):
+- Dedicated 3D Holographic Wavetable Oscillators with 11 volumetric depth slices,
+  3D orbital perspective camera, longitudinal mesh ribbons, and traveling scan planes
+- Zeneth Cyber Midtempo growls, Reinelex Neuro Reese, & Cyberpunk 2077 Combat Lead
+- Analog-modeled Zero-Delay Feedback (ZDF) filter with dynamic frequency curves
+- Integrated 64-step matrix sequencer with real-time animated LEDs at 105 BPM
+- 84 host-automatable parameters & 42 factory presets
 
 Usage:
     cargo run --release --example promo_track   # 1. Render soundtrack
@@ -37,13 +37,13 @@ OUT = os.path.join(ROOT, "assets/replicantwave_promo.mp4")
 
 W, H = 1920, 1080
 FPS = 30
-DUR = 66.0  # 32 bars @ 120 BPM = 64.0s + 2.0s tail
+DUR = 66.0  # 28 bars @ 105 BPM = 64.0s + 2.0s tail
 FRAMES = int(DUR * FPS)
-BPM = 120.0
+BPM = 105.0
 BEAT = 60.0 / BPM
 BAR = BEAT * 4.0
 
-# Cyberpunk Color Palette
+# Cyberpunk Palette
 CYAN = (0, 245, 255)
 MAGENTA = (255, 16, 128)
 NEON_PURPLE = (168, 70, 255)
@@ -97,7 +97,7 @@ def load_audio():
 
 def compute_spectrum(mono: np.ndarray, sr: int):
     bands = 56
-    edges = np.geomspace(40.0, 13000.0, bands + 1)
+    edges = np.geomspace(35.0, 13000.0, bands + 1)
     win = 2048
     hann = np.hanning(win)
     freqs = np.fft.rfftfreq(win, 1.0 / sr)
@@ -136,10 +136,12 @@ def get_wave_slice(stereo: np.ndarray, sr: int, f: int, n_samples: int = 400):
 
 
 def beat_energy(t: float) -> float:
-    if t < 8.0:
+    # 105 BPM midtempo beat energy from bar 4 (approx 9.14s)
+    t0 = 4.0 * BAR
+    if t < t0:
         return 0.0
-    phase = ((t - 8.0) % BEAT)
-    return max(0.0, 1.0 - phase / 0.11)
+    phase = ((t - t0) % BEAT)
+    return max(0.0, 1.0 - phase / 0.13)
 
 # ---------------------------------------------------------------------------
 # Visual Backgrounds & Overlays
@@ -150,13 +152,13 @@ def make_backdrop():
     px = np.zeros((H, W, 3), dtype=np.float32)
     for y in range(H):
         u = y / (H - 1)
-        top = np.array([20, 8, 40], dtype=np.float32)
+        top = np.array([22, 8, 42], dtype=np.float32)
         bot = np.array([4, 2, 10], dtype=np.float32)
         px[y, :, :] = top * (1 - u) + bot * u
 
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     d = np.sqrt((xx - W / 2) ** 2 + (yy - 80) ** 2)
-    bloom = np.clip(1.0 - d / 980.0, 0, 1) ** 3 * 52
+    bloom = np.clip(1.0 - d / 980.0, 0, 1) ** 3 * 54
     px[:, :, 0] += bloom
     px[:, :, 2] += bloom * 0.75
     return Image.fromarray(np.clip(px, 0, 255).astype(np.uint8))
@@ -231,7 +233,184 @@ def get_asset(name: str) -> Image.Image:
     return _images[name]
 
 # ---------------------------------------------------------------------------
-# Drawing Helpers & Motion Graphics
+# 3D Wavetable Synthesis Functions (Authentic ReplicantWave Tables)
+# ---------------------------------------------------------------------------
+
+def wavetable_cyber_neuro(phase: float, frame_t: float) -> float:
+    """Cyber Neuro: Wavefolded harmonics morphing with frame_t."""
+    s = 0.0
+    for h in range(1, 9):
+        amp = 1.0 / (h ** (0.8 - 0.3 * frame_t))
+        phase_shift = frame_t * h * 0.7
+        s += amp * math.sin((phase * h + phase_shift) * 2.0 * math.pi)
+    drive = 1.0 + 3.0 * frame_t
+    return math.sin(s * drive) * 0.88
+
+
+def wavetable_cyber_acid(phase: float, frame_t: float) -> float:
+    """Cyber Acid: Squelching saw wave with resonant harmonic folds."""
+    saw = 2.0 * (phase - 0.5)
+    f_res = 4.0 + 12.0 * frame_t
+    res = math.sin(phase * f_res * 2.0 * math.pi) * (0.35 + 0.65 * frame_t)
+    return (saw * 0.75 + res * 0.45).clamp(-1.05, 1.05) if hasattr(float, "clamp") else max(-1.05, min(1.05, saw * 0.75 + res * 0.45))
+
+
+def wavetable_analog_morph(phase: float, frame_t: float) -> float:
+    """Analog Morph: Saw -> Square -> Pulse."""
+    saw = 2.0 * (phase - 0.5)
+    pw = 0.5 - 0.35 * frame_t
+    square = 1.0 if phase < pw else -1.0
+    return saw * (1.0 - frame_t) + square * frame_t
+
+# ---------------------------------------------------------------------------
+# 3D Holographic Oscillator Renderer
+# ---------------------------------------------------------------------------
+
+def draw_3d_wavetable_hologram(
+    img: Image.Image,
+    box: tuple[int, int, int, int],
+    table_func,
+    color: tuple[int, int, int],
+    title: str,
+    table_name: str,
+    t: float,
+    pos: float = 0.5,
+    audio_reactive: float = 0.0,
+):
+    """Renders the true 3D Holographic Wavetable Display of ReplicantWave.
+
+    Uses full 3D perspective projection, orbital camera yaw/pitch, 11 volumetric depth
+    slices, longitudinal wireframe mesh ribbons, traveling scan laser plane, and
+    an active morphed waveform with translucent vertical fill.
+    """
+    x0, y0, x1, y1 = box
+    bw = x1 - x0
+    bh = y1 - y0
+
+    # 1. Dark CRT Well with glow border
+    d = ImageDraw.Draw(img)
+    d.rectangle([x0, y0, x1, y1], fill=(6, 3, 14, 235))
+    d.rectangle([x0, y0, x1, y1], outline=color + (140,), width=1)
+    draw_hud_brackets(d, (x0 - 4, y0 - 4, x1 + 4, y1 + 4), color, length=18, width=2)
+
+    # Header in holographic well
+    d.text((x0 + 14, y0 + 10), title, font=F_HUD, fill=color + (255,))
+    d.text((x0 + 14, y0 + 32), f"TABLE: {table_name} // 3D VOLUMETRIC VIEW", font=F_TINY, fill=DIM + (255,))
+    d.text((x1 - 14, y0 + 14), f"POS: {pos:.2f}", font=F_SMALL, fill=WHITE + (240,), anchor="ra")
+
+    # Internal CRT grid lines
+    for i in range(1, 8):
+        gx = x0 + int(bw * i / 8)
+        d.line([(gx, y0 + 50), (gx, y1 - 10)], fill=color + (18,), width=1)
+    for j in range(1, 4):
+        gy = y0 + 50 + int((bh - 60) * j / 4)
+        d.line([(x0 + 10, gy), (x1 - 10, gy)], fill=color + (16,), width=1)
+
+    # 3D Perspective Geometry (matches src/gui/wavetable_view.rs)
+    slices_count = 11
+    pts_per_slice = 84
+
+    top_y = y0 + 64.0
+    bottom_y = y1 - 20.0
+    span_y = bottom_y - top_y
+
+    # Orbital camera parallax
+    cam_yaw = math.sin(t * 0.70) * 16.0
+    cam_pitch = 0.5 + 0.5 * math.sin(t * 0.50 + 1.1)
+    depth_x = 28.0 + cam_pitch * 16.0
+    margin_x = 16.0
+
+    amp_budget = span_y * 0.32
+    band = span_y - 2.0 * amp_budget
+    y_front = top_y + amp_budget + band
+    y_back = top_y + amp_budget
+    amp_base = amp_budget * (0.88 + 0.12 * cam_pitch)
+
+    def project_3d(phase: float, amp: float, z: float) -> tuple[int, int]:
+        persp = 0.74 + 0.26 * z
+        baseline = y_back + z * (y_front - y_back)
+        start_x = x0 + margin_x + (1.0 - z) * depth_x + cam_yaw * (1.0 - z)
+        avail_w = (bw - margin_x * 2.0 - depth_x) * persp * (1.0 + 0.04 * cam_yaw / 9.0)
+        px = start_x + phase * avail_w
+        py = baseline - amp * amp_base * persp
+        return int(px), int(py)
+
+    # Traveling Depth Scan Plane (triangle sweep along Z)
+    scan_phase = (t * 0.40) % 1.0
+    scan_z = scan_phase * 2.0 if scan_phase < 0.5 else (1.0 - scan_phase) * 2.0
+
+    all_slices = []
+
+    # Draw 11 Depth Slices
+    for s in range(slices_count):
+        z = s / (slices_count - 1)
+        dist = abs(z - scan_z)
+        lit = max(0.0, 1.0 - dist / 0.24)
+
+        alpha = int(min(240, 30 + z * 80 + lit * 140))
+        tint = 0.4 + z * 0.6 + lit * 0.3
+        col = (
+            min(255, int(color[0] * tint)),
+            min(255, int(color[1] * tint)),
+            min(255, int(color[2] * tint)),
+            alpha,
+        )
+
+        slice_phase = z * 5.2 + s * 0.4
+        pts = []
+        for i in range(pts_per_slice):
+            phase = i / (pts_per_slice - 1)
+            raw_amp = table_func(phase, z)
+            # Audio-reactive ripple
+            ripple = 1.0 + 0.08 * math.sin(phase * 12.0 - t * 3.0 + slice_phase)
+            if audio_reactive > 0.05:
+                ripple += audio_reactive * 0.20 * math.sin(phase * 18.0 + t * 6.0)
+            drift = 0.02 * math.sin(phase * 5.0 + t * 1.5 + slice_phase)
+            amp = raw_amp * ripple + drift
+            pts.append(project_3d(phase, amp, z))
+
+        all_slices.append(pts)
+
+        # Draw slice line with laser scan glow
+        if lit > 0.35:
+            d.line(pts, fill=color + (int(lit * 90),), width=4)
+        d.line(pts, fill=col, width=2 if lit > 0.3 else 1)
+
+    # Draw 5 Longitudinal 3D Wireframe Ribbons connecting slices
+    for idx in [
+        pts_per_slice // 5,
+        2 * pts_per_slice // 5,
+        pts_per_slice // 2,
+        3 * pts_per_slice // 5,
+        4 * pts_per_slice // 5,
+    ]:
+        ribbon = [all_slices[s][idx] for s in range(slices_count)]
+        d.line(ribbon, fill=color + (42,), width=1)
+
+    # Draw Active Morphed Wave Ribbon (at current POS)
+    z_active = 1.0 - max(0.0, min(1.0, pos))
+    active_pts = []
+    base_pts = []
+    for i in range(pts_per_slice):
+        phase = i / (pts_per_slice - 1)
+        pulse = 1.0 + 0.08 * math.sin(phase * 14.0 - t * 4.0)
+        drift = 0.015 * math.sin(phase * 6.0 + t * 2.0)
+        amp = table_func(phase, pos) * pulse + drift
+        pt = project_3d(phase, amp, z_active)
+        b_pt = project_3d(phase, 0.0, z_active)
+        active_pts.append(pt)
+        base_pts.append(b_pt)
+
+    # Translucent vertical 3D ribbon under active wave
+    poly = active_pts + list(reversed(base_pts))
+    d.polygon(poly, fill=color + (40,))
+
+    # Glowing halo line + core sharp line (vector phosphor effect)
+    d.line(active_pts, fill=color + (140,), width=5)
+    d.line(active_pts, fill=WHITE + (255,), width=2)
+
+# ---------------------------------------------------------------------------
+# Motion Graphics & Telemetry Overlays
 # ---------------------------------------------------------------------------
 
 def ease(x: float) -> float:
@@ -420,32 +599,24 @@ def place_screenshot(
 
     img.alpha_composite(frame, (bx - 16, by - 16))
 
-# ---------------------------------------------------------------------------
-# Global Telemetry HUD & Overlay Engine
-# ---------------------------------------------------------------------------
 
 def draw_top_hud(img: Image.Image, t: float, section_name: str, beat: float):
     d = ImageDraw.Draw(img)
 
-    # Top dark glass bar
     d.rectangle([0, 0, W, 76], fill=(4, 2, 10, 220))
     d.line([(0, 76), (W, 76)], fill=CYAN + (90,), width=1)
 
-    # Logo
     d.text((48, 20), "REPLICANT", font=F_MED, fill=WHITE + (255,))
     lw = d.textlength("REPLICANT", font=F_MED)
     d.text((48 + lw + 8, 20), "WAVE", font=F_MED, fill=MAGENTA + (255,))
-    d.text((48, 48), "NIGHT CITY AUDIO OS // v1.2.1 · 64-BIT SIMD DSP", font=F_TINY, fill=DIM + (255,))
+    d.text((48, 48), "NIGHT CITY AUDIO OS // v1.2.1 · 3D WAVETABLE DSP", font=F_TINY, fill=DIM + (255,))
 
-    # Center Section Title
     d.text((W // 2, 22), section_name, font=F_HUD, fill=CYAN + (240,), anchor="ma")
-    # Section timeline ticks
     for i in range(12):
         x = W // 2 - 180 + i * 32
         on = (i / 11.0) < (t / DUR)
         d.rectangle([x, 50, x + 24, 53], fill=(CYAN if on else (45, 30, 65)) + (220,))
 
-    # Right side: REC & Timecode
     sec = int(t)
     frames = int((t - sec) * FPS)
     d.text((W - 48, 20), f"2077:{sec // 60:02d}:{sec % 60:02d}:{frames:02d}", font=F_MED, fill=WHITE + (240,), anchor="ra")
@@ -453,7 +624,7 @@ def draw_top_hud(img: Image.Image, t: float, section_name: str, beat: float):
     if int(t * 2) % 2 == 0:
         d.ellipse([W - 300, 26, W - 286, 40], fill=(255, 30, 80, 255))
     d.text((W - 280, 24), "REC ● LIVE", font=F_SMALL, fill=(255, 90, 130, 240))
-    d.text((W - 48, 48), "AUDIO: 48.0 kHz 32-BIT // VOICES: 8/16 [POLY]", font=F_TINY, fill=DIM + (255,), anchor="ra")
+    d.text((W - 48, 48), "TEMPO: 105 BPM // 3D DUAL OSCILLATORS", font=F_TINY, fill=DIM + (255,), anchor="ra")
 
 
 def draw_bottom_analyzer(img: Image.Image, spec_row: np.ndarray, t: float):
@@ -478,10 +649,9 @@ def draw_bottom_analyzer(img: Image.Image, spec_row: np.ndarray, t: float):
     d.rectangle([48, H - 12, 48 + int(prog_w * (t / DUR)), H - 8], fill=CYAN + (240,))
 
 
-def draw_active_preset_badge(img: Image.Image, t: float, num: str, name: str, category: str, desc: str, accent=CYAN, box=(32, 96, 330, 220)):
-    x0, y0, x1, y1 = box
+def draw_active_preset_badge(img: Image.Image, num: str, name: str, category: str, desc: str, accent=CYAN, box=(32, 96, 330, 210)):
     draw_cyber_card(img, box, accent, fill_alpha=220)
-
+    x0, y0, x1, y1 = box
     d = ImageDraw.Draw(img)
     d.rectangle([x0 + 14, y0 + 12, x0 + 68, y0 + 32], fill=accent + (40,), outline=accent + (200,), width=1)
     d.text((x0 + 41, y0 + 16), num, font=F_TINY, fill=accent + (255,), anchor="ma")
@@ -503,10 +673,10 @@ def draw_feature_banner(img: Image.Image, title: str, subtitle: str, accent: tup
     d = ImageDraw.Draw(img)
     d.text((48, y_pos + 12), title, font=F_MED, fill=accent + (255,))
     d.text((48, y_pos + 44), subtitle, font=F_SMALL, fill=WHITE + (230,))
-    d.text((W - 48, y_pos + 26), "REPLICANTWAVE // DSP DEMO", font=F_TINY, fill=accent + (160,), anchor="ra")
+    d.text((W - 48, y_pos + 26), "REPLICANTWAVE // 3D SYNTHESIS DEMO", font=F_TINY, fill=accent + (160,), anchor="ra")
 
 # ---------------------------------------------------------------------------
-# Scene Rendering Engine
+# Scene Rendering Engine (3D Oscillator Showcase + Midtempo Cyberpunk)
 # ---------------------------------------------------------------------------
 
 def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Image.Image:
@@ -516,54 +686,54 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
     frame_idx = int(t * FPS)
 
     # Grid floor on intro and outro
-    if t < 9.0 or t > 58.0:
+    if t < 9.5 or t > 58.0:
         alpha = int(140 * (1.0 - (t - 58.0) / 8.0) if t > 58.0 else min(1.0, t / 1.5))
         grid = GRID.copy()
         grid.putalpha(grid.getchannel("A").point(lambda a: int(a * alpha / 255)))
         img.alpha_composite(grid)
 
     # -----------------------------------------------------------------------
-    # SCENE 1: BOOT SEQUENCE & HERO INTERFACE (0.0s - 8.0s | Bars 0 - 4)
-    # Vangelis Blade Runner CS-80 Lead + Dystopian Pad
+    # SCENE 1: BOOT SEQUENCE & HERO INTERFACE (0.0s - 9.1s | Bars 0 - 4)
+    # Atmospheric Intro: Corpo Tower Dystopia Pad + Dystopian Drone
     # -----------------------------------------------------------------------
-    if t < 8.0:
-        section_name = "BOOT SEQUENCE // ANALOG WAVETABLES"
+    if t < 9.14:
+        section_name = "BOOT SEQUENCE // DUAL 3D OSCILLATORS ONLINE"
         if t < 3.2:
             title = "REPLICANTWAVE"
             d = ImageDraw.Draw(img)
             tw = d.textlength(title, font=F_TITLE)
             text_glow(img, (int(W / 2 - tw / 2), 340), title, F_TITLE, CYAN, glow=MAGENTA, radius=18)
             text_glow(img, (W // 2, 470), "NIGHT CITY AUDIO OS // CYBERPUNK SYNTHESIZER", F_MED, MAGENTA, radius=10, anchor="ma")
-            d.text((W // 2, 530), "INITIALIZING NEURAL DSP CORE · 38 FACTORY PATCHES · 84 HOST PARAMS", font=F_SMALL, fill=DIM + (255,), anchor="ma")
+            d.text((W // 2, 530), "INITIALIZING 3D DUAL WAVETABLE DSP · 42 FACTORY PATCHES · 84 HOST PARAMS", font=F_SMALL, fill=DIM + (255,), anchor="ma")
 
-            log_box = (W // 2 - 280, 580, W // 2 + 280, 680)
+            log_box = (W // 2 - 290, 580, W // 2 + 290, 680)
             draw_cyber_card(img, log_box, CYAN, fill_alpha=200)
             ld = ImageDraw.Draw(img)
-            ld.text((log_box[0] + 20, log_box[1] + 16), "> LOADING DUAL WAVETABLE BANK... [OK]", font=F_TINY, fill=LIME + (255,))
-            ld.text((log_box[0] + 20, log_box[1] + 38), "> 24dB ZERO-DELAY FEEDBACK FILTER... [ARMED]", font=F_TINY, fill=CYAN + (255,))
-            ld.text((log_box[0] + 20, log_box[1] + 60), "> 64-STEP NEON MATRIX SEQUENCER... [SYNCED]", font=F_TINY, fill=MAGENTA + (255,))
+            ld.text((log_box[0] + 20, log_box[1] + 16), "> 3D HOLOGRAPHIC OSCILLATORS A & B... [ARMED]", font=F_TINY, fill=LIME + (255,))
+            ld.text((log_box[0] + 20, log_box[1] + 38), "> 11-SLICE VOLUMETRIC ORBITAL DISPLAY... [SYNCED]", font=F_TINY, fill=CYAN + (255,))
+            ld.text((log_box[0] + 20, log_box[1] + 60), "> MIDTEMPO BASS ENGINE (105 BPM)... [READY]", font=F_TINY, fill=MAGENTA + (255,))
         else:
-            # Full UI centered at (360, 96, 1200, 850) with ZERO crop!
-            push = ease((t - 3.2) / 4.8)
+            # Full UI centered at (360, 96, 1200, 850) with ZERO crop
+            push = ease((t - 3.2) / 5.9)
             zoom = lerp(1.03, 1.0, push)
             place_screenshot(img, "hero_gui", (360, 96, 1200, 850), zoom=zoom, focus=(0.5, 0.5), accent=CYAN)
 
             # Left margin badge
             draw_active_preset_badge(
-                img, t, "03/38", "NEON BLADE 2049", "LEAD",
-                "Vangelis CS-80 lead with pitch bloom & reverb", CYAN,
+                img, "07/42", "CORPO DYSTOPIA", "PAD",
+                "Atmospheric pad with 3D stereo detune", CYAN,
                 box=(32, 96, 330, 210)
             )
             # Left telemetry stat block
             stat1 = (32, 230, 330, 480)
             draw_cyber_card(img, stat1, CYAN, fill_alpha=215)
             d = ImageDraw.Draw(img)
-            d.text((stat1[0] + 16, stat1[1] + 14), "SYNTH ARCHITECTURE", font=F_HUD, fill=CYAN + (255,))
+            d.text((stat1[0] + 16, stat1[1] + 14), "3D SYNTH ARCHITECTURE", font=F_HUD, fill=CYAN + (255,))
             d.line([(stat1[0] + 16, stat1[1] + 40), (stat1[2] - 16, stat1[1] + 40)], fill=CYAN + (70,), width=1)
             for i, (v, lbl) in enumerate([
+                ("3D", "VOLUMETRIC OSCILLATORS"),
+                ("42", "CYBERPUNK PRESETS"),
                 ("84", "HOST PARAMETERS"),
-                ("38", "FACTORY PRESETS"),
-                ("08", "WAVETABLES"),
                 ("64", "STEP MATRIX"),
             ]):
                 yy = stat1[1] + 52 + i * 46
@@ -574,127 +744,154 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
             osc_box = (1590, 96, W - 32, 260)
             draw_cyber_card(img, osc_box, MAGENTA, fill_alpha=220)
             d = ImageDraw.Draw(img)
-            d.text((osc_box[0] + 16, osc_box[1] + 12), "LIVE VECTOR SCOPE", font=F_HUD, fill=MAGENTA + (255,))
-            d.text((osc_box[0] + 16, osc_box[1] + 34), "Phosphor trace // 48 kHz", font=F_TINY, fill=DIM + (255,))
+            d.text((osc_box[0] + 16, osc_box[1] + 12), "LIVE 3D VECTOR SCOPE", font=F_HUD, fill=MAGENTA + (255,))
+            d.text((osc_box[0] + 16, osc_box[1] + 34), "Dual phosphor persistence trace", font=F_TINY, fill=DIM + (255,))
             draw_vector_oscilloscope(img, (osc_box[0] + 16, osc_box[1] + 54, osc_box[2] - 16, osc_box[3] - 16), wave_slice, CYAN, MAGENTA)
 
-            # Right margin lower: Engine status
+            # Right margin lower: Core telemetry
             stat2 = (1590, 280, W - 32, 480)
             draw_cyber_card(img, stat2, AMBER, fill_alpha=215)
             d = ImageDraw.Draw(img)
             d.text((stat2[0] + 16, stat2[1] + 14), "CORE TELEMETRY", font=F_HUD, fill=AMBER + (255,))
             d.line([(stat2[0] + 16, stat2[1] + 40), (stat2[2] - 16, stat2[1] + 40)], fill=AMBER + (70,), width=1)
             d.text((stat2[0] + 16, stat2[1] + 54), "DSP ENGINE: ACTIVE", font=F_SMALL, fill=LIME + (255,))
-            d.text((stat2[0] + 16, stat2[1] + 78), "POLYPHONY: 16 VOICES", font=F_SMALL, fill=WHITE + (255,))
-            d.text((stat2[0] + 16, stat2[1] + 102), "HOST AUTOMATION: READY", font=F_SMALL, fill=CYAN + (255,))
-            d.text((stat2[0] + 16, stat2[1] + 126), "AUDIO FORMAT: 32-BIT FLT", font=F_SMALL, fill=DIM + (255,))
+            d.text((stat2[0] + 16, stat2[1] + 78), "TEMPO: 105.0 BPM", font=F_SMALL, fill=WHITE + (255,))
+            d.text((stat2[0] + 16, stat2[1] + 102), "AUDIO: 48 kHz 32-BIT", font=F_SMALL, fill=CYAN + (255,))
+            d.text((stat2[0] + 16, stat2[1] + 126), "SIMD: AVX2 OPTIMIZED", font=F_SMALL, fill=DIM + (255,))
 
     # -----------------------------------------------------------------------
-    # SCENE 2: DROP 1 - DUAL WAVETABLE ENGINE & NEURO BASS (8.0s - 24.0s | Bars 4 - 12)
-    # Driving 16th Neuro Bass + 16th Netrunner Arp + Darkwave Drums
+    # SCENE 2: DROP 1 - DUAL 3D HOLOGRAPHIC OSCILLATORS SHOWCASE (9.14s - 27.4s | Bars 4 - 12)
+    # Zeneth Cyber Midtempo Growl + Night City Midtempo Chug
     # -----------------------------------------------------------------------
-    elif t < 24.0:
-        section_name = "SOUND ENGINE // DUAL WAVETABLES & NEURO BASS"
-        local = (t - 8.0) / 16.0
-        zoom = lerp(1.72, 1.58, ease(local))
-        focus_x = lerp(0.30, 0.42, ease(local))
-        focus_y = lerp(0.28, 0.32, ease(local))
+    elif t < 27.43:
+        section_name = "3D OSCILLATORS // VOLUMETRIC HOLOGRAPHIC ENGINE"
+        local = (t - 9.14) / 18.29
 
-        place_screenshot(img, "bass", (32, 180, 1280, 760), zoom=zoom, focus=(focus_x, focus_y), accent=CYAN)
-        draw_feature_banner(img, "DUAL WAVETABLE SYNTHESIS ENGINE", "8 CYBERPUNK TABLES · 8-VOICE UNISON · PHASE WARP · FORMANT SHIFT", CYAN, y_pos=90)
+        draw_feature_banner(
+            img,
+            "DUAL 3D HOLOGRAPHIC WAVETABLE OSCILLATORS",
+            "11 VOLUMETRIC SLICES · ORBITAL CAMERA PARALLAX · REAL-TIME DEPTH SCAN · WAVEFOLDING",
+            CYAN,
+            y_pos=90,
+        )
 
-        # Right Telemetry Stack
-        card1 = (1340, 180, W - 32, 440)
-        draw_cyber_card(img, card1, CYAN, fill_alpha=225)
+        # Large 3D Hologram of OSCILLATOR 1 (Cyber Neuro) on the left
+        osc1_box = (48, 180, 940, 680)
+        pos1 = 0.45 + 0.35 * math.sin(t * 1.5)
+        draw_3d_wavetable_hologram(
+            img,
+            osc1_box,
+            wavetable_cyber_neuro,
+            CYAN,
+            "OSCILLATOR 1 // 3D HOLOGRAPHIC DISPLAY",
+            "CYBER NEURO",
+            t,
+            pos=pos1,
+            audio_reactive=beat,
+        )
+
+        # Large 3D Hologram of OSCILLATOR 2 (Cyber Acid) on the right
+        osc2_box = (980, 180, W - 48, 680)
+        pos2 = 0.65 + 0.25 * math.sin(t * 2.1)
+        draw_3d_wavetable_hologram(
+            img,
+            osc2_box,
+            wavetable_cyber_acid,
+            MAGENTA,
+            "OSCILLATOR 2 // VOLUMETRIC STEREO DISPLAY",
+            "CYBER ACID",
+            t,
+            pos=pos2,
+            audio_reactive=beat,
+        )
+
+        # Lower Telemetry Bar: Active Preset & Controls Info
+        lower_box1 = (48, 700, 940, 856)
+        draw_cyber_card(img, lower_box1, CYAN, fill_alpha=225)
         d = ImageDraw.Draw(img)
-        d.text((card1[0] + 20, card1[1] + 16), "ACTIVE STEMS // 120 BPM", font=F_HUD, fill=CYAN + (255,))
-        d.line([(card1[0] + 20, card1[1] + 44), (card1[2] - 20, card1[1] + 44)], fill=CYAN + (80,), width=1)
+        d.text((lower_box1[0] + 20, lower_box1[1] + 16), "▶ ACTIVE PRESET: ZENETH CYBER MIDTEMPO", font=F_HUD, fill=CYAN + (255,))
+        d.text((lower_box1[0] + 20, lower_box1[1] + 44), "8-VOICE UNISON // STEREO SPREAD: 95% // WAVEFOLDED DRIVE: 2.8x", font=F_SMALL, fill=WHITE + (255,))
+        d.text((lower_box1[0] + 20, lower_box1[1] + 70), "WARP: FORMANT SHIFT · HARD TUBE CLIPPING · 105 BPM MIDTEMPO GROOVE", font=F_TINY, fill=DIM + (255,))
 
-        d.text((card1[0] + 20, card1[1] + 58), "▶ PRESET 27: NEURO REAPER BASS", font=F_SMALL, fill=WHITE + (255,))
-        d.text((card1[0] + 40, card1[1] + 80), "Distorted wavetable growl + 16th chug", font=F_TINY, fill=DIM + (255,))
-
-        d.text((card1[0] + 20, card1[1] + 108), "▶ PRESET 05: NETRUNNER ARP", font=F_SMALL, fill=WHITE + (255,))
-        d.text((card1[0] + 40, card1[1] + 130), "16th-note ping-pong stereo datastream", font=F_TINY, fill=DIM + (255,))
-
-        d.text((card1[0] + 20, card1[1] + 158), "▶ PRESET 06: DARKSYNTH POWER STAB", font=F_SMALL, fill=WHITE + (255,))
-        d.text((card1[0] + 40, card1[1] + 180), "Carpenter Brut analog brass punches", font=F_TINY, fill=DIM + (255,))
-
-        d.text((card1[0] + 20, card1[1] + 210), "▶ SUB LAYER: 45 Hz Pure Sine", font=F_SMALL, fill=LIME + (255,))
-
-        # Live Vector Oscilloscope in Card 2
-        card2 = (1340, 464, W - 32, 720)
-        draw_cyber_card(img, card2, MAGENTA, fill_alpha=225)
+        lower_box2 = (980, 700, W - 48, 856)
+        draw_cyber_card(img, lower_box2, MAGENTA, fill_alpha=225)
         d = ImageDraw.Draw(img)
-        d.text((card2[0] + 20, card2[1] + 16), "REAL-TIME DSP VECTOR SCOPE", font=F_HUD, fill=MAGENTA + (255,))
-        d.text((card2[0] + 20, card2[1] + 40), "Denormal-proof 64-bit SIMD float buffer", font=F_TINY, fill=DIM + (255,))
-        draw_vector_oscilloscope(img, (card2[0] + 20, card2[1] + 64, card2[2] - 20, card2[3] - 20), wave_slice, CYAN, MAGENTA)
-
-        # Bottom stat bar
-        card3 = (1340, 744, W - 32, 850)
-        draw_cyber_card(img, card3, AMBER, fill_alpha=225)
-        d = ImageDraw.Draw(img)
-        d.text((card3[0] + 20, card3[1] + 14), "ENGINE PERFORMANCE", font=F_TINY, fill=AMBER + (255,))
-        d.text((card3[0] + 20, card3[1] + 34), "CPU LOAD: 2.9% // 16 VOICES // 48 kHz", font=F_SMALL, fill=WHITE + (255,))
-        d.text((card3[0] + 20, card3[1] + 60), "ZERO LATENCY · SAMPLE-ACCURATE MIDI", font=F_TINY, fill=LIME + (255,))
-
-    # -----------------------------------------------------------------------
-    # SCENE 3: DROP 2 - ACID INJECTION & ZDF FILTER (24.0s - 40.0s | Bars 12 - 20)
-    # Screaming Nightside Razor Lead + Chrome Acid 303 squelch
-    # -----------------------------------------------------------------------
-    elif t < 40.0:
-        section_name = "SIGNAL CHAIN // 24dB ZDF FILTER & ACID RESIDUALS"
-        local = (t - 24.0) / 16.0
-        zoom = lerp(1.75, 1.62, ease(local))
-        focus_x = lerp(0.55, 0.48, ease(local))
-        focus_y = lerp(0.40, 0.36, ease(local))
-
-        place_screenshot(img, "lead", (32, 180, 1260, 760), zoom=zoom, focus=(focus_x, focus_y), accent=AMBER)
-        draw_feature_banner(img, "ANALOG-MODELED ZERO-DELAY FEEDBACK (ZDF) FILTER", "LP / HP / BP / NOTCH · 24dB/OCT · DRIVE SATURATION · ENVELOPE MODULATION", AMBER, y_pos=90)
-
-        # Right Telemetry Stack
-        card1 = (1320, 180, W - 32, 420)
-        draw_cyber_card(img, card1, AMBER, fill_alpha=225)
-        d = ImageDraw.Draw(img)
-        d.text((card1[0] + 20, card1[1] + 16), "ACID & LEAD SHOWCASE", font=F_HUD, fill=AMBER + (255,))
-        d.line([(card1[0] + 20, card1[1] + 44), (card1[2] - 20, card1[1] + 44)], fill=AMBER + (80,), width=1)
-
-        d.text((card1[0] + 20, card1[1] + 58), "▶ PRESET 29: NIGHTSIDE RAZOR LEAD", font=F_SMALL, fill=WHITE + (255,))
-        d.text((card1[0] + 40, card1[1] + 80), "Hard-synced wavetable screaming through delay", font=F_TINY, fill=DIM + (255,))
-
-        d.text((card1[0] + 20, card1[1] + 108), "▶ PRESET 04: CHROME ACID 303", font=F_SMALL, fill=WHITE + (255,))
-        d.text((card1[0] + 40, card1[1] + 130), "Classic 303 squelch, accent slides & resonant bite", font=F_TINY, fill=DIM + (255,))
-
-        d.text((card1[0] + 20, card1[1] + 158), "▶ PRESET 09: GHOST IN THE WIRE CHOIR", font=F_SMALL, fill=WHITE + (255,))
-        d.text((card1[0] + 40, card1[1] + 180), "Cyberpunk vocaloid spectral ambiance", font=F_TINY, fill=DIM + (255,))
-
-        # Animated ZDF Filter Response Curve in Card 2
-        card2 = (1320, 444, W - 32, 720)
-        draw_cyber_card(img, card2, AMBER, fill_alpha=225)
-        d = ImageDraw.Draw(img)
-        d.text((card2[0] + 20, card2[1] + 16), "DYNAMIC FILTER FREQUENCY RESPONSE", font=F_HUD, fill=AMBER + (255,))
-        d.text((card2[0] + 20, card2[1] + 40), "24dB 4-Pole Ladder Emulation + Nonlinear Resonance", font=F_TINY, fill=DIM + (255,))
-
-        cutoff_hz = 1200.0 + 3800.0 * (0.5 + 0.5 * math.sin(t * 4.0))
-        draw_filter_response(img, (card2[0] + 20, card2[1] + 70, card2[2] - 20, card2[3] - 20), cutoff_hz, reso=0.82)
-
-        # Card 3: Host Automation
-        card3 = (1320, 744, W - 32, 850)
-        draw_cyber_card(img, card3, LIME, fill_alpha=225)
-        d = ImageDraw.Draw(img)
-        d.text((card3[0] + 20, card3[1] + 14), "HOST AUTOMATION READY", font=F_TINY, fill=LIME + (255,))
-        d.text((card3[0] + 20, card3[1] + 34), "84 HOST PARAMETERS · MIDI LEARN ON EVERY KNOB", font=F_SMALL, fill=WHITE + (255,))
-        d.text((card3[0] + 20, card3[1] + 60), "AUTOMATE CUTOFF, RESONANCE, DRIVE & FX FROM ANY DAW", font=F_TINY, fill=CYAN + (255,))
+        d.text((lower_box2[0] + 20, lower_box2[1] + 16), "▶ 3D PERSPECTIVE RENDERING ENGINE", font=F_HUD, fill=MAGENTA + (255,))
+        d.text((lower_box2[0] + 20, lower_box2[1] + 44), "DYNAMIC DEPTH SCAN // REAL-TIME ORBITAL PITCH & YAW // VOLUMETRIC MESH", font=F_SMALL, fill=WHITE + (255,))
+        d.text((lower_box2[0] + 20, lower_box2[1] + 70), "SUB-ZERO LATENCY · GPU-ACCELERATED HOLOGRAPHIC PROJECTION", font=F_TINY, fill=LIME + (255,))
 
     # -----------------------------------------------------------------------
-    # SCENE 4: BREAKDOWN - 64-STEP SEQUENCER & CYBER FX (40.0s - 48.0s | Bars 20 - 24)
+    # SCENE 3: DROP 2 - 3D WAVETABLE MORPH & COMBAT LEAD (27.43s - 45.71s | Bars 12 - 20)
+    # Cyberpunk 2077 Combat Lead + Reinelex Neuro Reese
+    # -----------------------------------------------------------------------
+    elif t < 45.71:
+        section_name = "SIGNAL CHAIN // 3D MORPHING & COMBAT LEAD"
+        local = (t - 27.43) / 18.28
+
+        draw_feature_banner(
+            img,
+            "REAL-TIME 3D WAVETABLE POSITION MORPHING & ZDF FILTER",
+            "SEARING HARD-SYNC COMBAT LEAD · REINELEX NEURO REESE · 24dB RESONANT SQUELCH",
+            AMBER,
+            y_pos=90,
+        )
+
+        # Left: Large 3D Hologram sweeping position continuously
+        osc_box = (48, 180, 940, 680)
+        pos_sweep = (math.sin(t * 1.8) * 0.5 + 0.5)
+        draw_3d_wavetable_hologram(
+            img,
+            osc_box,
+            wavetable_analog_morph,
+            AMBER,
+            "OSCILLATOR 1 // CONTINUOUS 3D MORPH",
+            "ANALOG MORPH (SAW -> SQUARE)",
+            t,
+            pos=pos_sweep,
+            audio_reactive=beat,
+        )
+
+        # Right Top: Filter Response Curve
+        flt_box = (980, 180, W - 48, 450)
+        draw_cyber_card(img, flt_box, AMBER, fill_alpha=225)
+        d = ImageDraw.Draw(img)
+        d.text((flt_box[0] + 20, flt_box[1] + 16), "ZDF 24dB FILTER FREQUENCY RESPONSE", font=F_HUD, fill=AMBER + (255,))
+        d.text((flt_box[0] + 20, flt_box[1] + 40), "Zero-Delay Feedback analog ladder with non-linear saturation", font=F_TINY, fill=DIM + (255,))
+
+        cutoff_hz = 1400.0 + 3600.0 * (0.5 + 0.5 * math.sin(t * 3.5))
+        draw_filter_response(img, (flt_box[0] + 20, flt_box[1] + 70, flt_box[2] - 20, flt_box[3] - 20), cutoff_hz, reso=0.85)
+
+        # Right Middle: Active Stems Telemetry
+        stems_box = (980, 474, W - 48, 700)
+        draw_cyber_card(img, stems_box, CYAN, fill_alpha=225)
+        d = ImageDraw.Draw(img)
+        d.text((stems_box[0] + 20, stems_box[1] + 16), "MIDTEMPO COMBAT STEMS // 105 BPM", font=F_HUD, fill=CYAN + (255,))
+        d.line([(stems_box[0] + 20, stems_box[1] + 44), (stems_box[2] - 20, stems_box[1] + 44)], fill=CYAN + (70,), width=1)
+        d.text((stems_box[0] + 20, stems_box[1] + 58), "▶ PRESET 39: CYBERPUNK 2077 COMBAT LEAD", font=F_SMALL, fill=WHITE + (255,))
+        d.text((stems_box[0] + 40, stems_box[1] + 80), "Hard-synced screamer tearing through stereo delay", font=F_TINY, fill=DIM + (255,))
+        d.text((stems_box[0] + 20, stems_box[1] + 108), "▶ PRESET 40: REINELEX NEURO REESE", font=F_SMALL, fill=WHITE + (255,))
+        d.text((stems_box[0] + 40, stems_box[1] + 130), "Wide detuned stereo Reese bass with chorus & drive", font=F_TINY, fill=DIM + (255,))
+        d.text((stems_box[0] + 20, stems_box[1] + 158), "▶ PRESET 41: NIGHT CITY MIDTEMPO CHUG", font=F_SMALL, fill=LIME + (255,))
+
+        # Lower Stats
+        stat_b = (48, 700, W - 48, 856)
+        draw_cyber_card(img, stat_b, LIME, fill_alpha=220)
+        d = ImageDraw.Draw(img)
+        d.text((stat_b[0] + 20, stat_b[1] + 16), "COMPLETE DAW HOST AUTOMATION", font=F_HUD, fill=LIME + (255,))
+        d.text((stat_b[0] + 20, stat_b[1] + 44), "84 AUTOMATABLE PARAMETERS · REAL-TIME MIDI LEARN · AUTOMATE WAVETABLE POS & FILTER", font=F_SMALL, fill=WHITE + (255,))
+        d.text((stat_b[0] + 20, stat_b[1] + 70), "COMPATIBLE WITH ABLETON LIVE, FL STUDIO, REAPER, BITWIG, LOGIC PRO & CUBASE", font=F_TINY, fill=CYAN + (255,))
+
+    # -----------------------------------------------------------------------
+    # SCENE 4: BREAKDOWN - 64-STEP SEQUENCER & 3D PHOSPHOR SCOPE (45.71s - 54.86s | Bars 20 - 24)
     # Ethereal Choir + Pad + ZDF Filter Sweep + Accelerating Snare Roll
     # -----------------------------------------------------------------------
-    elif t < 48.0:
-        section_name = "PATTERN ENGINE // 64-STEP MATRIX & CYBER FX"
+    elif t < 54.86:
+        section_name = "PATTERN ENGINE // 64-STEP MATRIX & 3D PHOSPHOR SCOPE"
         place_screenshot(img, "seq", (32, 180, 1856, 530), zoom=1.0, focus=(0.5, 0.82), accent=MAGENTA)
 
-        # Active animated step cursor in real-time (16th note = 0.125s @ 120 BPM)
-        step_idx = int((t - 40.0) / 0.125) % 16
+        # Active animated step cursor in real-time (16th note = BEAT/4 at 105 BPM)
+        step_dur = BEAT / 4.0
+        step_idx = int((t - 45.71) / step_dur) % 16
         draw_animated_sequencer_leds(img, (32, 180, 1856, 710), step_idx)
 
         draw_feature_banner(img, "INTEGRATED 64-STEP NEON MATRIX SEQUENCER", "4 PAGES · PER-STEP NOTE, VELOCITY, SLIDE & ACCENT · SWING · KEY TRANSPOSE", MAGENTA, y_pos=90)
@@ -704,7 +901,7 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         for i, (col, title, sub, val) in enumerate([
             (MAGENTA, "MATRIX SEQUENCER", "4 Pages x 16 Steps // Slide & Accent", "64 STEPS"),
             (CYAN, "CYBER FX SUITE", "Distortion · Stereo Chorus · Delay · Reverb", "04 MODULES"),
-            (LIME, "FACTORY PATCH BANK", "Tested & Audited by Automated CI", "38 PATCHES"),
+            (LIME, "FACTORY PATCH BANK", "Tested & Audited by Automated CI", "42 PATCHES"),
         ]):
             bx = 32 + i * (cw + 48)
             card = (bx, 736, bx + cw, 856)
@@ -715,28 +912,23 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
             d.text((bx + 20, 826), sub, font=F_TINY, fill=DIM + (255,))
 
     # -----------------------------------------------------------------------
-    # SCENE 5: MAXIMUM CLIMAX - ALL SYSTEMS ENGAGED (48.0s - 60.0s | Bars 24 - 30)
-    # The heaviest drop: Drums, Neuro Bass, Screaming Lead, Choir, Acid 303!
+    # SCENE 5: MAXIMUM CLIMAX - FULL ENGINE & DUAL 3D OSCILLATORS OVERDRIVE (54.86s - 61.71s | Bars 24 - 27)
     # -----------------------------------------------------------------------
-    elif t < 60.0:
-        section_name = "MAXIMUM CLIMAX // 38 PRESETS · 84 HOST CONTROLS"
+    elif t < 61.71:
+        section_name = "MAXIMUM CLIMAX // FULL ENGINE 3D OVERDRIVE"
         zoom = 1.0 + 0.02 * beat
         place_screenshot(img, "hero_gui", (360, 96, 1200, 850), zoom=zoom, focus=(0.5, 0.5), accent=MAGENTA)
 
         # Dynamic patch highlight during climax
-        c_sub = t - 48.0
-        if c_sub < 2.5:
-            p_num, p_name, p_cat, p_desc, p_col = "27/38", "NEURO REAPER BASS", "BASS", "Distorted wavetable growl", CYAN
-        elif c_sub < 5.0:
-            p_num, p_name, p_cat, p_desc, p_col = "29/38", "NIGHTSIDE RAZOR", "LEAD", "Hard-synced screamer", AMBER
-        elif c_sub < 7.5:
-            p_num, p_name, p_cat, p_desc, p_col = "04/38", "CHROME ACID 303", "BASS", "Resonant acid squelch", LIME
-        elif c_sub < 10.0:
-            p_num, p_name, p_cat, p_desc, p_col = "19/38", "GHOST PROTOCOL", "PAD", "Cyber vocaloid choir", NEON_PURPLE
+        c_sub = t - 54.86
+        if c_sub < 2.3:
+            p_num, p_name, p_cat, p_desc, p_col = "38/42", "ZENETH MIDTEMPO", "BASS", "Heavy neuro growls", CYAN
+        elif c_sub < 4.6:
+            p_num, p_name, p_cat, p_desc, p_col = "39/42", "COMBAT LEAD", "LEAD", "Hard-synced screamer", AMBER
         else:
-            p_num, p_name, p_cat, p_desc, p_col = "01/38", "NIGHT CITY BASS", "BASS", "Classic cyberpunk chug", MAGENTA
+            p_num, p_name, p_cat, p_desc, p_col = "40/42", "NEURO REESE", "BASS", "Wide detuned bass", NEON_PURPLE
 
-        draw_active_preset_badge(img, t, p_num, p_name, p_cat, p_desc, p_col, box=(32, 96, 330, 210))
+        draw_active_preset_badge(img, p_num, p_name, p_cat, p_desc, p_col, box=(32, 96, 330, 210))
 
         # Left lower telemetry
         stat1 = (32, 230, 330, 480)
@@ -747,7 +939,7 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         d.text((stat1[0] + 16, stat1[1] + 54), "10 SYNTH STEMS ACTIVE", font=F_SMALL, fill=WHITE + (255,))
         d.text((stat1[0] + 16, stat1[1] + 78), "16/16 VOICES ENGAGED", font=F_SMALL, fill=LIME + (255,))
         d.text((stat1[0] + 16, stat1[1] + 102), "PEAK LEVEL: -0.5 dBFS", font=F_SMALL, fill=CYAN + (255,))
-        d.text((stat1[0] + 16, stat1[1] + 126), "DYNAMIC RANGE: FULL", font=F_SMALL, fill=DIM + (255,))
+        d.text((stat1[0] + 16, stat1[1] + 126), "TEMPO: 105 BPM MIDTEMPO", font=F_SMALL, fill=DIM + (255,))
 
         # Right margin: Live vector oscilloscope
         osc_box = (1590, 96, W - 32, 260)
@@ -763,14 +955,13 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         d = ImageDraw.Draw(img)
         d.text((stat2[0] + 16, stat2[1] + 14), "MASTER BUS TELEMETRY", font=F_HUD, fill=AMBER + (255,))
         d.line([(stat2[0] + 16, stat2[1] + 40), (stat2[2] - 16, stat2[1] + 40)], fill=AMBER + (70,), width=1)
-        d.text((stat2[0] + 16, stat2[1] + 54), "RMS POWER: 0.395", font=F_SMALL, fill=WHITE + (255,))
+        d.text((stat2[0] + 16, stat2[1] + 54), "RMS POWER: 0.367", font=F_SMALL, fill=WHITE + (255,))
         d.text((stat2[0] + 16, stat2[1] + 78), "SIDECHAIN PUMP: ON", font=F_SMALL, fill=LIME + (255,))
         d.text((stat2[0] + 16, stat2[1] + 102), "ANALOG SATURATION: ON", font=F_SMALL, fill=AMBER + (255,))
-        d.text((stat2[0] + 16, stat2[1] + 126), "ZERO LATENCY // 120 BPM", font=F_SMALL, fill=CYAN + (255,))
+        d.text((stat2[0] + 16, stat2[1] + 126), "ZERO LATENCY // 105 BPM", font=F_SMALL, fill=CYAN + (255,))
 
     # -----------------------------------------------------------------------
-    # SCENE 6: OUTRO - THE END OF TRANSMISSION (60.0s - 66.0s | Bars 30 - 32)
-    # Sub impact, delay decay, resolution on D minor
+    # SCENE 6: OUTRO - 3D DUAL HOLOGRAPHIC ROTATION & LINKS (61.71s - 66.0s | Bars 27 - 28)
     # -----------------------------------------------------------------------
     else:
         section_name = "END OF TRANSMISSION // FREE & OPEN SOURCE"
@@ -780,7 +971,7 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         tw = d.textlength(title, font=F_TITLE)
         text_glow(img, (int(W / 2 - tw / 2), y), title, F_TITLE, CYAN, glow=MAGENTA, radius=18)
 
-        sub = "CYBERNETIC WAVETABLE SYNTHESIZER FOR CYBERPUNK, DARKSYNTH & INDUSTRIAL"
+        sub = "CYBERNETIC 3D WAVETABLE SYNTHESIZER FOR MIDTEMPO, DARKSYNTH & INDUSTRIAL"
         sw = d.textlength(sub, font=F_SMALL)
         d.text((W // 2 - sw / 2, y + 115), sub, font=F_SMALL, fill=WHITE + (240,))
 
@@ -819,13 +1010,13 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
     g = 0.0
     if 2.4 <= t <= 3.3:
         g = 0.85 * (1.0 - (t - 2.4) / 0.9)
-    elif 7.95 <= t <= 8.35:
-        g = 1.0 * (1.0 - (t - 7.95) / 0.40)
-    elif 23.95 <= t <= 24.35:
-        g = 0.95 * (1.0 - (t - 23.95) / 0.40)
-    elif 47.85 <= t <= 48.40:
-        g = 1.1 * (1.0 - (t - 47.85) / 0.55)
-    for boundary in (40.0, 60.0):
+    elif 9.05 <= t <= 9.45:
+        g = 1.0 * (1.0 - (t - 9.05) / 0.40)
+    elif 27.35 <= t <= 27.75:
+        g = 0.95 * (1.0 - (t - 27.35) / 0.40)
+    elif 54.75 <= t <= 55.25:
+        g = 1.1 * (1.0 - (t - 54.75) / 0.50)
+    for boundary in (45.71, 61.71):
         if boundary <= t < boundary + 0.25:
             g = max(g, 0.75 * (1.0 - (t - boundary) / 0.25))
 
@@ -855,7 +1046,7 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Render ReplicantWave Cyberpunk Promo Video")
+    parser = argparse.ArgumentParser(description="Render ReplicantWave 3D Oscillator Promo Video")
     parser.add_argument("--preview", action="store_true", help="Generate QA preview frames only")
     args = parser.parse_args()
 
@@ -870,7 +1061,7 @@ def main():
     if args.preview:
         out_prev = os.path.join(ROOT, "target/promo/preview")
         os.makedirs(out_prev, exist_ok=True)
-        test_times = [2.0, 5.0, 9.0, 16.0, 25.0, 32.0, 42.0, 50.0, 55.0, 62.0]
+        test_times = [2.0, 5.0, 12.0, 18.0, 30.0, 38.0, 48.0, 56.0, 58.0, 63.0]
         for t in test_times:
             f = min(FRAMES - 1, int(t * FPS))
             w_slice = get_wave_slice(stereo, sr, f)
