@@ -181,7 +181,7 @@ def make_scanlines():
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
     for y in range(0, H, 4):
-        d.line([(0, y), (W, y)], fill=(0, 0, 0, 28), width=1)
+        d.line([(0, y), (W, y)], fill=(0, 0, 0, 14), width=1)
     return layer
 
 
@@ -428,14 +428,14 @@ def glitch_effect(img: Image.Image, amount: float, seed: int) -> Image.Image:
     arr = np.array(img)
     h, w = arr.shape[:2]
     rng = np.random.default_rng(seed)
-    slices = int(2 + amount * 9)
+    slices = min(2, int(1 + amount * 2))
     for _ in range(slices):
-        y0 = int(rng.integers(0, h - 30))
-        hgt = int(rng.integers(8, int(24 + amount * 80)))
-        dx = int(rng.normal(0, 8 + amount * 40))
+        y0 = int(rng.integers(0, h - 20))
+        hgt = int(rng.integers(4, 12))
+        dx = int(rng.normal(0, 2 + amount * 4))
         arr[y0 : y0 + hgt] = np.roll(arr[y0 : y0 + hgt], dx, axis=1)
 
-    shift = int(1 + amount * 8)
+    shift = max(1, min(2, int(amount * 3)))
     out = arr.copy()
     out[:, :, 0] = np.roll(arr[:, :, 0], shift, axis=1)
     out[:, :, 2] = np.roll(arr[:, :, 2], -shift, axis=1)
@@ -953,7 +953,7 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         d = ImageDraw.Draw(img)
         d.text((stat2[0] + 16, stat2[1] + 14), "MASTER BUS TELEMETRY", font=F_HUD, fill=AMBER + (255,))
         d.line([(stat2[0] + 16, stat2[1] + 40), (stat2[2] - 16, stat2[1] + 40)], fill=AMBER + (70,), width=1)
-        d.text((stat2[0] + 16, stat2[1] + 54), "RMS POWER: 0.406", font=F_SMALL, fill=WHITE + (255,))
+        d.text((stat2[0] + 16, stat2[1] + 54), "RMS POWER: 0.226", font=F_SMALL, fill=WHITE + (255,))
         d.text((stat2[0] + 16, stat2[1] + 78), "EXTRA TERRA CYBERDRUMS: ON", font=F_SMALL, fill=LIME + (255,))
         d.text((stat2[0] + 16, stat2[1] + 102), "ANALOG SATURATION: ON", font=F_SMALL, fill=AMBER + (255,))
         d.text((stat2[0] + 16, stat2[1] + 126), "ZERO LATENCY // 102 BPM", font=F_SMALL, fill=CYAN + (255,))
@@ -1003,20 +1003,15 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
         d.text((W // 2 - fw / 2, y + 375), foot, font=F_TINY, fill=DIM + (255,))
 
     # -----------------------------------------------------------------------
-    # Global Glitches on Beat Drops
+    # Subtle Micro-Jitter on Beat Drops (Clean & 100% Legible)
     # -----------------------------------------------------------------------
     g = 0.0
-    if 2.4 <= t <= 3.3:
-        g = 0.85 * (1.0 - (t - 2.4) / 0.9)
-    elif 9.30 <= t <= 9.60:
-        g = 1.0 * (1.0 - (t - 9.30) / 0.30)
-    elif 28.10 <= t <= 28.45:
-        g = 0.95 * (1.0 - (t - 28.10) / 0.35)
-    elif 56.35 <= t <= 56.75:
-        g = 1.1 * (1.0 - (t - 56.35) / 0.40)
-    for boundary in (47.06, 63.53):
-        if boundary <= t < boundary + 0.25:
-            g = max(g, 0.75 * (1.0 - (t - boundary) / 0.25))
+    if 9.38 <= t <= 9.52:
+        g = 0.15 * (1.0 - (t - 9.38) / 0.14)
+    elif 28.20 <= t <= 28.34:
+        g = 0.15 * (1.0 - (t - 28.20) / 0.14)
+    elif 56.44 <= t <= 56.58:
+        g = 0.18 * (1.0 - (t - 56.44) / 0.14)
 
     if g > 0.02:
         img = glitch_effect(img, g, int(t * 1000) & 0xFFFF)
@@ -1025,10 +1020,10 @@ def render_scene(t: float, spec_row: np.ndarray, wave_slice: np.ndarray) -> Imag
     draw_bottom_analyzer(img, spec_row, t)
 
     if beat > 0.05:
-        flash = Image.new("RGBA", (W, H), (140, 20, 160, int(18 * beat)))
+        flash = Image.new("RGBA", (W, H), (140, 20, 160, int(14 * beat)))
         img.alpha_composite(flash)
 
-    img = Image.blend(img, GRAIN[frame_idx % len(GRAIN)].convert("RGBA"), 0.04)
+    img = Image.blend(img, GRAIN[frame_idx % len(GRAIN)].convert("RGBA"), 0.015)
     img.alpha_composite(SCANLINES)
     img.alpha_composite(VIGNETTE)
 

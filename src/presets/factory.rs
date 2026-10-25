@@ -2790,27 +2790,27 @@ fn preset_extra_terra_cyber_bass() -> SynthPreset {
         "Signature Extra Terra midtempo growl with wavefolding bite, punchy sub, and gritty cyberpunk harmonics.",
     );
     p.osc1_table = 1; // Cyber Neuro
-    p.osc1_pos = 0.55;
+    p.osc1_pos = 0.50;
     p.osc1_unison = 4;
-    p.osc1_detune = 0.22;
-    p.osc1_spread = 0.75;
-    p.osc1_level = 0.95;
+    p.osc1_detune = 0.18;
+    p.osc1_spread = 0.70;
+    p.osc1_level = 0.85;
     p.osc2_table = 4; // Digital Edge
     p.osc2_enabled = true;
     p.osc2_tune = 12.0; // Octave higher bite
-    p.osc2_pos = 0.45;
+    p.osc2_pos = 0.40;
     p.osc2_unison = 2;
-    p.osc2_detune = 0.15;
-    p.osc2_level = 0.7;
+    p.osc2_detune = 0.12;
+    p.osc2_level = 0.55;
     p.sub_enabled = true;
     p.sub_wave = 0; // Sine
     p.sub_octave = -1;
-    p.sub_level = 0.95;
+    p.sub_level = 0.70;
     p.filter_type = 0; // LowPass24
-    p.filter_cutoff = 950.0;
-    p.filter_reso = 0.52;
-    p.filter_drive = 2.8;
-    p.filter_env_amount = 0.80;
+    p.filter_cutoff = 1100.0;
+    p.filter_reso = 0.35;
+    p.filter_drive = 1.35;
+    p.filter_env_amount = 0.65;
     p.amp_attack = 0.003;
     p.amp_decay = 0.22;
     p.amp_sustain = 0.35;
@@ -2821,8 +2821,8 @@ fn preset_extra_terra_cyber_bass() -> SynthPreset {
     p.filter_release = 0.12;
     p.dist_enabled = true;
     p.dist_mode = 2; // Wavefolder
-    p.dist_amount = 0.85;
-    p.dist_mix = 0.90;
+    p.dist_amount = 0.35;
+    p.dist_mix = 0.45;
     p
 }
 
@@ -2834,37 +2834,37 @@ fn preset_extra_terra_lead() -> SynthPreset {
     );
     p.osc1_table = 0; // Analog Morph
     p.osc1_pos = 0.85;
-    p.osc1_unison = 5;
-    p.osc1_detune = 0.24;
-    p.osc1_spread = 0.9;
-    p.osc1_level = 0.85;
+    p.osc1_unison = 4;
+    p.osc1_detune = 0.20;
+    p.osc1_spread = 0.85;
+    p.osc1_level = 0.80;
     p.osc2_table = 1; // Cyber Neuro
     p.osc2_enabled = true;
     p.osc2_tune = 0.0;
-    p.osc2_fine = 6.0;
-    p.osc2_pos = 0.3;
-    p.osc2_unison = 3;
-    p.osc2_detune = 0.18;
-    p.osc2_level = 0.75;
+    p.osc2_fine = 5.0;
+    p.osc2_pos = 0.25;
+    p.osc2_unison = 2;
+    p.osc2_detune = 0.14;
+    p.osc2_level = 0.60;
     p.filter_type = 0; // LowPass24
-    p.filter_cutoff = 5200.0;
-    p.filter_reso = 0.58;
-    p.filter_drive = 2.2;
+    p.filter_cutoff = 4800.0;
+    p.filter_reso = 0.38;
+    p.filter_drive = 1.25;
     p.amp_attack = 0.004;
     p.amp_decay = 0.32;
     p.amp_sustain = 0.70;
     p.amp_release = 0.28;
     p.dist_enabled = true;
     p.dist_mode = 1; // Overdrive
-    p.dist_amount = 0.65;
-    p.dist_mix = 0.60;
+    p.dist_amount = 0.30;
+    p.dist_mix = 0.35;
     p.delay_enabled = true;
     p.delay_sync = true;
     p.delay_time = 250.0;
-    p.delay_fb = 0.45;
-    p.delay_mix = 0.38;
+    p.delay_fb = 0.40;
+    p.delay_mix = 0.30;
     p.reverb_enabled = true;
-    p.reverb_size = 0.82;
-    p.reverb_mix = 0.32;
+    p.reverb_size = 0.75;
+    p.reverb_mix = 0.25;
     p
 }
