@@ -1,33 +1,22 @@
 pub mod audio;
 pub mod gui;
+pub mod params;
 pub mod presets;
 
 use audio::SynthEngine;
 use gui::{render_cyberpunk_gui, GuiSharedState};
 use nih_plug::prelude::*;
-use nih_plug_egui::{create_egui_editor, EguiState};
+use nih_plug_egui::create_egui_editor;
+use params::ReplicantWaveParams;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
 pub struct ReplicantWave {
     params: Arc<ReplicantWaveParams>,
     engine: Arc<Mutex<SynthEngine>>,
+    /// Last pattern version copied into the engine.
+    pattern_version: u64,
     sample_rate: f32,
-}
-
-#[derive(Params)]
-pub struct ReplicantWaveParams {
-    #[persist = "editor-state"]
-    pub editor_state: Arc<EguiState>,
-
-    #[id = "gain"]
-    pub gain: FloatParam,
-
-    #[id = "cutoff"]
-    pub cutoff: FloatParam,
-
-    #[id = "resonance"]
-    pub resonance: FloatParam,
 }
 
 impl Default for ReplicantWave {
@@ -35,41 +24,8 @@ impl Default for ReplicantWave {
         Self {
             params: Arc::new(ReplicantWaveParams::default()),
             engine: Arc::new(Mutex::new(SynthEngine::default())),
+            pattern_version: 0,
             sample_rate: 44100.0,
-        }
-    }
-}
-
-impl Default for ReplicantWaveParams {
-    fn default() -> Self {
-        Self {
-            editor_state: EguiState::from_size(1300, 920),
-            gain: FloatParam::new(
-                "Master Gain",
-                util::db_to_gain(0.0),
-                FloatRange::Linear { min: 0.0, max: 1.5 },
-            )
-            .with_unit(" dB")
-            .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
-            .with_string_to_value(formatters::s2v_f32_gain_to_db()),
-
-            cutoff: FloatParam::new(
-                "Filter Cutoff",
-                2500.0,
-                FloatRange::Skewed {
-                    min: 20.0,
-                    max: 20000.0,
-                    factor: FloatRange::skew_factor(-2.0),
-                },
-            )
-            .with_unit(" Hz")
-            .with_value_to_string(formatters::v2s_f32_hz_then_khz(1)),
-
-            resonance: FloatParam::new(
-                "Filter Resonance",
-                0.2,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
         }
     }
 }
@@ -79,7 +35,7 @@ impl Plugin for ReplicantWave {
     const VENDOR: &'static str = "DanimanX";
     const URL: &'static str = "https://github.com/DanimanX/ReplicantWave";
     const EMAIL: &'static str = "daniel.rojas@chileatiende.cl";
-    const VERSION: &'static str = "1.1.1";
+    const VERSION: &'static str = "1.2.0";
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
         main_input_channels: None,
@@ -100,14 +56,15 @@ impl Plugin for ReplicantWave {
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         let editor_state = self.params.editor_state.clone();
         let engine = self.engine.clone();
+        let params = self.params.clone();
 
         create_egui_editor(
             editor_state,
-            GuiSharedState::new(engine),
+            GuiSharedState::new(engine, params),
             |_, _| {},
-            move |egui_ctx, _setter, state| {
+            move |egui_ctx, setter, state| {
                 nih_plug_egui::egui::CentralPanel::default().show(egui_ctx, |ui| {
-                    render_cyberpunk_gui(ui, state);
+                    render_cyberpunk_gui(ui, setter, state);
                 });
             },
         )
@@ -120,7 +77,13 @@ impl Plugin for ReplicantWave {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
-        self.engine.lock().set_sample_rate(self.sample_rate);
+        let mut engine = self.engine.lock();
+        engine.set_sample_rate(self.sample_rate);
+        // Push the persisted pattern and the current parameter values so a
+        // restored session sounds exactly like it did when saved.
+        self.params.sync_to_engine(&mut engine);
+        self.params
+            .apply_pattern_if_changed(&mut engine, &mut self.pattern_version);
         true
     }
 
@@ -142,11 +105,16 @@ impl Plugin for ReplicantWave {
 
         let mut engine = self.engine.lock();
 
+        // Every host-visible parameter is mirrored into the engine here. This
+        // runs before MIDI so automation and MIDI land in the same block.
+        self.params.sync_to_engine(&mut engine);
+        self.params
+            .apply_pattern_if_changed(&mut engine, &mut self.pattern_version);
+
         // Sync host transport & BPM
         let host_playing = context.transport().playing;
         let host_bpm = context.transport().tempo.map(|t| t as f32).unwrap_or(0.0);
 
-        // Process incoming MIDI events with smart 64-step sequencer bridging
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { note, velocity, .. } => {
@@ -156,21 +124,16 @@ impl Plugin for ReplicantWave {
                     engine.handle_midi_note_off(note);
                 }
                 NoteEvent::MidiPitchBend { value, .. } => {
-                    // value is -1.0 to 1.0
                     engine.set_pitch_bend(value, 2.0);
                 }
-                NoteEvent::MidiCC { cc, value, .. } => {
-                    // CC 1 (Modulation Wheel)
-                    if cc == 1 {
-                        let norm = value as f32 / 127.0;
-                        engine.fx.distortion.amount = norm;
-                    }
-                }
+                // Every control is a host parameter now, so MIDI is handled by
+                // the host's own MIDI-learn / modulation matrix. The previous
+                // hidden CC 1 -> distortion mapping was removed because it
+                // silently fought the distortion parameter and automation.
                 _ => {}
             }
         }
 
-        // Render audio
         let num_samples = buffer.samples();
         let outputs = buffer.as_slice();
         let (left_channel, right_channel) = outputs.split_at_mut(1);

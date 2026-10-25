@@ -1,33 +1,36 @@
 //! NIGHT CITY HUD — radical cyberpunk editor for ReplicantWave.
 //!
-//! Layout: HUD header, preset bank strip, 2x2 synth grid + control deck, and a
-//! full-width 64-step neon matrix. Painting uses a detached `UiModel` snapshot;
-//! the engine mutex is only touched for microseconds at preset load/apply time.
+//! Every knob, toggle and selector is bound to a host-visible parameter. The
+//! editor never mutates the DSP engine directly: it writes through the host
+//! `ParamSetter`, and `ReplicantWaveParams::sync_to_engine` mirrors the values
+//! into the engine on the audio thread. That keeps automation, MIDI learn,
+//! generic-UI control and session restore working for all controls.
 
 pub mod knob;
-pub mod model;
 pub mod oscilloscope;
 pub mod sequencer_view;
 pub mod theme;
 pub mod time;
 pub mod wavetable_view;
 
-use crate::audio::filter::FilterType;
-use crate::audio::fx::distortion::DistortionMode;
-use crate::audio::oscillator::NoiseType;
+use crate::audio::step_sequencer::Step;
 use crate::audio::SynthEngine;
+use crate::params::{
+    ChorusParams, DelayParams, DistParams, EnvParams, FilterParams, NoiseParams, OscParams,
+    ReplicantWaveParams, SubParams,
+};
 use crate::presets::factory::get_factory_presets;
 use crate::presets::SynthPreset;
-use knob::{draw_rotary_knob, draw_rotary_knob_log, draw_rotary_knob_usize};
-use model::{EnvUi, FxUi, OscUi, UiModel};
+use knob::{knob_f, knob_i, param_chip, param_select, param_slider, write_i};
+use nih_plug::prelude::ParamSetter;
 use oscilloscope::draw_oscilloscope;
 use sequencer_view::{draw_sequencer_deck, SequencerUiState};
 use theme::CyberTheme;
 use wavetable_view::{draw_wavetable_preview, WaveThumb};
 
 use nih_plug_egui::egui::{
-    pos2, vec2, Align, Button, Color32, ComboBox, Layout, Pos2, Rect, Response, RichText, Sense,
-    Stroke, StrokeKind, Ui, UiBuilder,
+    pos2, vec2, Align, Button, Color32, Layout, Pos2, Rect, RichText, Sense, Stroke, StrokeKind,
+    Ui, UiBuilder,
 };
 use parking_lot::Mutex;
 use std::f32::consts::PI;
@@ -43,28 +46,34 @@ const CATEGORIES: [&str; 9] = [
 
 pub struct GuiSharedState {
     pub engine: Arc<Mutex<SynthEngine>>,
+    pub params: Arc<ReplicantWaveParams>,
     pub scope: Arc<Mutex<crate::audio::ScopeBuffer>>,
     pub active_voices: Arc<AtomicUsize>,
-    pub model: UiModel,
+    /// Editable copy of the persisted 64-step pattern.
+    pub steps: Vec<Step>,
+    pub steps_dirty: bool,
     pub presets: Vec<SynthPreset>,
     pub current_preset_idx: usize,
+    pub preset_loaded: bool,
     pub pending_preset: Option<usize>,
     pub wave_thumbs: Vec<WaveThumb>,
     pub wave_names: Vec<String>,
     pub seq_ui_state: SequencerUiState,
     pub category: usize,
     pub live_step: usize,
+    /// Pattern version currently shown, so a session restore refreshes the grid.
+    pub seen_pattern_version: u64,
 }
 
 impl GuiSharedState {
-    pub fn new(engine: Arc<Mutex<SynthEngine>>) -> Self {
+    pub fn new(engine: Arc<Mutex<SynthEngine>>, params: Arc<ReplicantWaveParams>) -> Self {
         let presets = get_factory_presets();
-        let (model, scope, active_voices, wave_thumbs, wave_names) = {
-            let mut guard = engine.lock();
-            // Start on the first factory preset instead of the bare defaults.
-            if let Some(p) = presets.first() {
-                p.apply_to_engine(&mut guard);
-            }
+        let (steps, pattern_version) = {
+            let guard = params.pattern.lock();
+            (guard.steps.clone(), guard.version)
+        };
+        let (scope, active_voices, wave_thumbs, wave_names) = {
+            let guard = engine.lock();
             let thumbs = guard
                 .bank
                 .tables
@@ -72,7 +81,6 @@ impl GuiSharedState {
                 .map(WaveThumb::from_wavetable)
                 .collect();
             (
-                UiModel::capture(&guard),
                 guard.scope_data.clone(),
                 guard.active_voice_count.clone(),
                 thumbs,
@@ -82,17 +90,21 @@ impl GuiSharedState {
 
         Self {
             engine,
+            params,
             scope,
             active_voices,
-            model,
+            steps,
+            steps_dirty: false,
             presets,
             current_preset_idx: 0,
+            preset_loaded: false,
             pending_preset: None,
             wave_thumbs,
             wave_names,
             seq_ui_state: SequencerUiState::default(),
             category: 0,
             live_step: 0,
+            seen_pattern_version: pattern_version,
         }
     }
 
@@ -101,6 +113,21 @@ impl GuiSharedState {
             self.current_preset_idx = idx;
             self.pending_preset = Some(idx);
         }
+    }
+
+    fn apply_pending_preset(&mut self, setter: &ParamSetter) {
+        let Some(idx) = self.pending_preset else {
+            return;
+        };
+        if let Some(p) = self.presets.get(idx) {
+            p.apply_to_params(setter, &self.params);
+            p.write_pattern(&self.params.pattern);
+            self.steps = p.steps();
+            self.steps_dirty = false;
+            self.seen_pattern_version = self.params.pattern.lock().version;
+            self.preset_loaded = true;
+        }
+        self.pending_preset = None;
     }
 
     fn filtered_presets(&self) -> Vec<usize> {
@@ -112,29 +139,39 @@ impl GuiSharedState {
             .filter(|&i| preset_group(&self.presets[i].category) == group)
             .collect()
     }
-}
 
-pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
-    let t = time::now_secs();
-
-    // 60 FPS for the animated scopes and wavetables, without starving the audio
-    // thread. `request_repaint_after` is a floor; views that need smoother
-    // motion also call `request_repaint` themselves.
-    ui.ctx().request_repaint_after(Duration::from_millis(16));
-
-    // Apply a queued preset with a non-blocking lock. Never hold the engine
-    // mutex while painting.
-    if let Some(idx) = state.pending_preset {
-        if let Some(mut engine) = state.engine.try_lock() {
-            if let Some(p) = state.presets.get(idx) {
-                p.apply_to_engine(&mut engine);
-                state.model = UiModel::capture(&engine);
-            }
-            state.pending_preset = None;
+    fn flush_steps(&mut self) {
+        if !self.steps_dirty {
+            return;
         }
+        let mut guard = self.params.pattern.lock();
+        guard.steps = self.steps.clone();
+        guard.version = guard.version.wrapping_add(1);
+        self.seen_pattern_version = guard.version;
+        self.steps_dirty = false;
     }
 
-    // Live telemetry (separate atomics / short try_lock, no paint-time lock).
+    /// Pick up a pattern that changed outside the editor (host session restore).
+    fn refresh_steps_from_store(&mut self) {
+        if self.steps_dirty {
+            return;
+        }
+        let guard = self.params.pattern.lock();
+        if guard.version != self.seen_pattern_version {
+            self.steps = guard.steps.clone();
+            self.seen_pattern_version = guard.version;
+        }
+    }
+}
+
+pub fn render_cyberpunk_gui(ui: &mut Ui, setter: &ParamSetter, state: &mut GuiSharedState) {
+    let t = time::now_secs();
+
+    ui.ctx().request_repaint_after(Duration::from_millis(16));
+
+    state.refresh_steps_from_store();
+    state.apply_pending_preset(setter);
+
     if let Some(engine) = state.engine.try_lock() {
         state.live_step = engine.sequencer.current_step;
     }
@@ -149,7 +186,6 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
         out
     };
 
-    // Base style.
     {
         let style = ui.style_mut();
         style.spacing.item_spacing = vec2(5.0, 3.0);
@@ -201,13 +237,25 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
         vec2(root.width(), seq_h),
     );
 
-    draw_top_bar(ui, top_rect, state, &scope_samples, active_voices, t);
+    draw_top_bar(ui, setter, top_rect, state, active_voices, t);
     draw_category_strip(ui, strip_rect, state, t);
-    draw_main_area(ui, main_rect, state, &scope_samples, active_voices, t);
+    draw_main_area(
+        ui,
+        setter,
+        main_rect,
+        state,
+        &scope_samples,
+        active_voices,
+        t,
+    );
+
+    let params = state.params.clone();
     draw_sequencer_deck(
         ui,
+        setter,
         seq_rect,
-        &mut state.model.seq,
+        &params.seq,
+        &mut state.steps,
         &mut state.seq_ui_state,
         state.live_step,
         t,
@@ -215,10 +263,7 @@ pub fn render_cyberpunk_gui(ui: &mut Ui, state: &mut GuiSharedState) {
 
     CyberTheme::draw_overlay(ui.painter(), full);
 
-    // Push the final model back without ever blocking the audio callback.
-    if let Some(mut engine) = state.engine.try_lock() {
-        state.model.apply(&mut engine);
-    }
+    state.flush_steps();
 }
 
 fn preset_group(category: &str) -> &'static str {
@@ -280,20 +325,18 @@ fn panel(
 
 fn draw_top_bar(
     ui: &mut Ui,
+    setter: &ParamSetter,
     rect: Rect,
     state: &mut GuiSharedState,
-    _scope: &[f32],
     active_voices: usize,
     t: f32,
 ) {
     let accent = CyberTheme::NEON_CYAN;
     CyberTheme::card_shell(ui.painter(), rect, accent);
 
-    // Logo block (painted for precise HUD typography).
     let p = ui.painter();
     let lx = rect.min.x + 18.0;
     let ly = rect.min.y + 11.0;
-    // Hexagonal emblem
     let c = pos2(lx + 12.0, ly + 15.0);
     let hex: Vec<Pos2> = (0..6)
         .map(|i| {
@@ -336,7 +379,6 @@ fn draw_top_bar(
         CyberTheme::TEXT_DIM,
     );
 
-    // Preset browser
     let bx = rect.min.x + 290.0;
     let by = rect.min.y + 9.0;
     let indices = state.filtered_presets();
@@ -355,33 +397,32 @@ fn draw_top_bar(
                 .add(neon_button("◀", CyberTheme::NEON_CYAN, false))
                 .on_hover_text("Previous preset")
                 .clicked()
+                && !indices.is_empty()
             {
-                if !indices.is_empty() {
-                    let ni = if pos == 0 { indices.len() - 1 } else { pos - 1 };
-                    clicked_preset = Some(indices[ni]);
-                }
+                let ni = if pos == 0 { indices.len() - 1 } else { pos - 1 };
+                clicked_preset = Some(indices[ni]);
             }
 
             let cur = &state.presets[state.current_preset_idx];
             let color = group_color(preset_group(&cur.category));
+            let name = if state.preset_loaded {
+                format!("{}  //  {}", cur.name, cur.category.to_uppercase())
+            } else {
+                "INIT PATCH  //  CLICK ▶".to_string()
+            };
             ui.label(
                 RichText::new(format!("{:03}", state.current_preset_idx + 1))
                     .color(CyberTheme::TEXT_DIM)
                     .monospace()
                     .size(9.0),
             );
-            ComboBox::from_id_salt("night_city_preset")
-                .selected_text(
-                    RichText::new(format!("{}  //  {}", cur.name, cur.category.to_uppercase()))
-                        .color(color)
-                        .monospace()
-                        .size(11.0),
-                )
+            nih_plug_egui::egui::ComboBox::from_id_salt("night_city_preset")
+                .selected_text(RichText::new(name).color(color).monospace().size(11.0))
                 .width(250.0)
                 .show_ui(ui, |ui| {
                     for &idx in &indices {
-                        let p = &state.presets[idx];
-                        let label = format!("{:03}  {}  [{}]", idx + 1, p.name, p.category);
+                        let pr = &state.presets[idx];
+                        let label = format!("{:03}  {}  [{}]", idx + 1, pr.name, pr.category);
                         if ui
                             .selectable_label(idx == state.current_preset_idx, label)
                             .clicked()
@@ -395,11 +436,10 @@ fn draw_top_bar(
                 .add(neon_button("▶", CyberTheme::NEON_CYAN, false))
                 .on_hover_text("Next preset")
                 .clicked()
+                && !indices.is_empty()
             {
-                if !indices.is_empty() {
-                    let ni = (pos + 1) % indices.len();
-                    clicked_preset = Some(indices[ni]);
-                }
+                let ni = (pos + 1) % indices.len();
+                clicked_preset = Some(indices[ni]);
             }
         },
     );
@@ -407,14 +447,13 @@ fn draw_top_bar(
         state.queue_preset(idx);
     }
 
-    // Voices LED meter + master + donate
     let right = rect.max.x - 18.0;
     let master_rect = Rect::from_min_size(pos2(right - 210.0, rect.min.y + 5.0), vec2(48.0, 44.0));
     ui.allocate_new_ui(UiBuilder::new().max_rect(master_rect), |ui| {
-        draw_rotary_knob(
+        knob_f(
             ui,
-            &mut state.model.master,
-            0.0..=1.5,
+            setter,
+            &state.params.gain,
             "MASTER",
             CyberTheme::NEON_AMBER,
         );
@@ -474,7 +513,6 @@ fn draw_top_bar(
         let _ = open::that(DONATION_URL);
     }
 
-    // Animated scan tick marks on the right edge.
     for i in 0..6 {
         let x = rect.max.x - 8.0 - i as f32 * 4.0;
         let a = (60.0 + 40.0 * (t * 2.0 + i as f32).sin()) as u8;
@@ -489,6 +527,7 @@ fn draw_category_strip(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f
     CyberTheme::card_shell(ui.painter(), rect, CyberTheme::NEON_PURPLE);
     let inner = rect.shrink2(vec2(12.0, 4.0));
     let mut new_category = state.category;
+    let mut randomize = false;
     ui.allocate_new_ui(
         UiBuilder::new()
             .max_rect(inner)
@@ -534,7 +573,7 @@ fn draw_category_strip(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f
                     .on_hover_text("Generate a new cyberpunk pattern")
                     .clicked()
                 {
-                    randomize_steps(&mut state.model.seq.steps, t.to_bits() ^ 0x9e37_79b9);
+                    randomize = true;
                 }
                 ui.label(
                     RichText::new("64-STEP SLIDING MATRIX")
@@ -545,6 +584,11 @@ fn draw_category_strip(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f
             });
         },
     );
+
+    if randomize {
+        randomize_steps(&mut state.steps, t.to_bits() ^ 0x9e37_79b9);
+        state.steps_dirty = true;
+    }
 
     if new_category != state.category {
         state.category = new_category;
@@ -560,6 +604,7 @@ fn draw_category_strip(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f
 
 fn draw_main_area(
     ui: &mut Ui,
+    setter: &ParamSetter,
     rect: Rect,
     state: &mut GuiSharedState,
     scope: &[f32],
@@ -573,7 +618,9 @@ fn draw_main_area(
     let right_x = rect.min.x + left_w + gap;
     let right_w = rect.max.x - right_x;
 
-    // OSC 1 / OSC 2
+    let params = state.params.clone();
+    let names: Vec<&str> = state.wave_names.iter().map(|s| s.as_str()).collect();
+
     let osc1_rect = Rect::from_min_size(rect.min, vec2(card_w, row_h));
     let osc2_rect = Rect::from_min_size(
         pos2(rect.min.x + card_w + gap, rect.min.y),
@@ -581,40 +628,48 @@ fn draw_main_area(
     );
     draw_osc_card(
         ui,
+        setter,
         osc1_rect,
         "01",
         "OSCILLATOR // A",
         CyberTheme::NEON_CYAN,
-        &mut state.model.osc1,
+        &params.osc1,
         &state.wave_thumbs,
-        &state.wave_names,
+        &names,
         t,
     );
     draw_osc_card(
         ui,
+        setter,
         osc2_rect,
         "02",
         "OSCILLATOR // B",
         CyberTheme::NEON_MAGENTA,
-        &mut state.model.osc2,
+        &params.osc2,
         &state.wave_thumbs,
-        &state.wave_names,
+        &names,
         t,
     );
 
-    // SUB + NOISE / FILTER
     let low_y = rect.min.y + row_h + gap;
     let sub_rect = Rect::from_min_size(pos2(rect.min.x, low_y), vec2(card_w, row_h));
     let filter_rect =
         Rect::from_min_size(pos2(rect.min.x + card_w + gap, low_y), vec2(card_w, row_h));
-    draw_sub_noise_card(ui, sub_rect, state, t);
-    draw_filter_card(ui, filter_rect, state, t);
+    draw_sub_noise_card(ui, setter, sub_rect, &params.sub, &params.noise, t);
+    draw_filter_card(
+        ui,
+        setter,
+        filter_rect,
+        &params.filter,
+        &params.cutoff,
+        &params.resonance,
+        t,
+    );
 
-    // Right column: scope, envelopes, FX
     let scope_h = 158.0;
     let env_h = 172.0;
     let scope_rect = Rect::from_min_size(pos2(right_x, rect.min.y), vec2(right_w, scope_h));
-    draw_scope_card(ui, scope_rect, scope, active_voices, state, t);
+    draw_scope_card(ui, scope_rect, scope, active_voices, t);
 
     let env_y = rect.min.y + scope_h + gap;
     let env_w = (right_w - gap) * 0.5;
@@ -622,20 +677,22 @@ fn draw_main_area(
     let flt_env_rect = Rect::from_min_size(pos2(right_x + env_w + gap, env_y), vec2(env_w, env_h));
     draw_env_card(
         ui,
+        setter,
         amp_rect,
         "06",
         "AMP ENVELOPE",
         CyberTheme::NEON_PINK,
-        &mut state.model.amp_env,
+        &params.amp_env,
         t,
     );
     draw_env_card(
         ui,
+        setter,
         flt_env_rect,
         "07",
         "FILTER ENVELOPE",
         CyberTheme::NEON_CYAN,
-        &mut state.model.filter_env,
+        &params.filter_env,
         t,
     );
 
@@ -644,97 +701,108 @@ fn draw_main_area(
         pos2(right_x, fx_y),
         vec2(right_w, (rect.max.y - fx_y).max(120.0)),
     );
-    draw_fx_card(ui, fx_rect, &mut state.model.fx, t);
+    draw_fx_card(
+        ui,
+        setter,
+        fx_rect,
+        &params.dist,
+        &params.chorus,
+        &params.delay,
+        &params.reverb,
+        &params.gate.enabled,
+        t,
+    );
 }
 
 fn draw_osc_card(
     ui: &mut Ui,
+    setter: &ParamSetter,
     rect: Rect,
     index: &str,
     title: &str,
     color: Color32,
-    osc: &mut OscUi,
+    osc: &OscParams,
     thumbs: &[WaveThumb],
-    names: &[String],
+    names: &[&str],
     t: f32,
 ) {
     panel(ui, rect, color, index, title, t, |ui| {
-        // header + table selection
         ui.horizontal(|ui| {
-            small_chip(ui, &mut osc.enabled, "ON", color, 48.0);
+            param_chip(ui, setter, &osc.enabled, "ON", color, 48.0);
             ui.label(
                 RichText::new("TABLE")
                     .color(CyberTheme::TEXT_DIM)
                     .monospace()
                     .size(7.0),
             );
-            ComboBox::from_id_salt(format!("wt_combo_{}", index))
-                .selected_text(
-                    RichText::new(names.get(osc.table).cloned().unwrap_or_else(|| "—".into()))
-                        .color(color)
-                        .monospace()
-                        .size(9.0),
-                )
-                .width(150.0)
-                .show_ui(ui, |ui| {
-                    for (i, name) in names.iter().enumerate() {
-                        ui.selectable_value(&mut osc.table, i, name);
-                    }
-                });
+            param_select(ui, setter, &osc.table, names, 150.0);
         });
 
-        if let Some(thumb) = thumbs.get(osc.table % thumbs.len().max(1)) {
-            draw_wavetable_preview(ui, thumb, osc.pos, color, ui.available_width(), 96.0);
+        let table = osc.table.value().clamp(0, names.len() as i32 - 1) as usize;
+        if let Some(thumb) = thumbs.get(table % thumbs.len().max(1)) {
+            draw_wavetable_preview(
+                ui,
+                thumb,
+                osc.position.value(),
+                color,
+                ui.available_width(),
+                96.0,
+            );
         }
 
         ui.horizontal(|ui| {
-            draw_rotary_knob(ui, &mut osc.pos, 0.0..=1.0, "POS", color);
-            draw_rotary_knob(ui, &mut osc.tune, -36.0..=36.0, "TUNE", color);
-            draw_rotary_knob_usize(ui, &mut osc.unison, 1..=8, "UNISON", color);
-            draw_rotary_knob(ui, &mut osc.detune, 0.0..=1.0, "DETUNE", color);
-            draw_rotary_knob(ui, &mut osc.fine, -100.0..=100.0, "FINE", color);
+            knob_f(ui, setter, &osc.position, "POS", color);
+            knob_f(ui, setter, &osc.tune, "TUNE", color);
+            knob_i(ui, setter, &osc.unison, "UNISON", color);
+            knob_f(ui, setter, &osc.detune, "DETUNE", color);
+            knob_f(ui, setter, &osc.fine, "FINE", color);
         });
         ui.horizontal(|ui| {
-            draw_rotary_knob(ui, &mut osc.level, 0.0..=1.5, "LEVEL", color);
-            draw_rotary_knob(ui, &mut osc.spread, 0.0..=1.0, "SPREAD", color);
-            draw_rotary_knob(ui, &mut osc.formant, -1.0..=1.0, "FORMANT", color);
-            draw_rotary_knob(ui, &mut osc.bend, -1.0..=1.0, "BEND", color);
-            draw_rotary_knob(ui, &mut osc.pan, -1.0..=1.0, "PAN", color);
+            knob_f(ui, setter, &osc.level, "LEVEL", color);
+            knob_f(ui, setter, &osc.spread, "SPREAD", color);
+            knob_f(ui, setter, &osc.formant, "FORMANT", color);
+            knob_f(ui, setter, &osc.bend, "BEND", color);
+            knob_f(ui, setter, &osc.pan, "PAN", color);
         });
     });
 }
 
-fn draw_sub_noise_card(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f32) {
+fn draw_sub_noise_card(
+    ui: &mut Ui,
+    setter: &ParamSetter,
+    rect: Rect,
+    sub: &SubParams,
+    noise: &NoiseParams,
+    t: f32,
+) {
     let color = CyberTheme::NEON_LIME;
-    let model = &mut state.model;
     panel(ui, rect, color, "03", "SUB + NOISE", t, |ui| {
         ui.horizontal(|ui| {
-            small_chip(ui, &mut model.sub_enabled, "SUB", color, 48.0);
-            let waves = ["SINE", "TRI", "SAW", "PULSE 50", "PULSE 25", "PULSE 12"];
-            ComboBox::from_id_salt("sub_wave")
-                .selected_text(waves[model.sub_wave.min(waves.len() - 1)])
-                .width(96.0)
-                .show_ui(ui, |ui| {
-                    for (i, w) in waves.iter().enumerate() {
-                        ui.selectable_value(&mut model.sub_wave, i, *w);
-                    }
-                });
-            for oct in [-2i8, -1, 0] {
+            param_chip(ui, setter, &sub.enabled, "SUB", color, 48.0);
+            param_select(
+                ui,
+                setter,
+                &sub.wave,
+                &["SINE", "TRI", "SAW", "PULSE 50", "PULSE 25", "PULSE 12"],
+                96.0,
+            );
+            let octave = sub.octave.value();
+            for oct in [-2i32, -1, 0] {
                 if ui
                     .add(category_button(
                         &format!("{:+}", oct),
-                        model.sub_octave == oct,
+                        octave == oct,
                         CyberTheme::NEON_LIME,
                     ))
                     .clicked()
                 {
-                    model.sub_octave = oct;
+                    write_i(setter, &sub.octave, oct);
                 }
             }
         });
         ui.horizontal(|ui| {
-            draw_rotary_knob(ui, &mut model.sub_level, 0.0..=1.0, "S LVL", color);
-            draw_rotary_knob(ui, &mut model.sub_pan, -1.0..=1.0, "S PAN", color);
+            knob_f(ui, setter, &sub.level, "S LVL", color);
+            knob_f(ui, setter, &sub.pan, "S PAN", color);
         });
 
         ui.add_space(3.0);
@@ -748,81 +816,51 @@ fn draw_sub_noise_card(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f
         ui.add_space(4.0);
 
         ui.horizontal(|ui| {
-            small_chip(
+            param_chip(
                 ui,
-                &mut model.noise_enabled,
+                setter,
+                &noise.enabled,
                 "NOISE",
                 CyberTheme::NEON_CYAN,
                 58.0,
             );
-            let kinds = ["WHITE", "PINK", "CYBERBIT"];
-            let idx = match model.noise_type {
-                NoiseType::White => 0,
-                NoiseType::Pink => 1,
-                NoiseType::CyberBit => 2,
-            };
-            let mut sel = idx;
-            ComboBox::from_id_salt("noise_type")
-                .selected_text(kinds[idx])
-                .width(96.0)
-                .show_ui(ui, |ui| {
-                    for (i, k) in kinds.iter().enumerate() {
-                        ui.selectable_value(&mut sel, i, *k);
-                    }
-                });
-            model.noise_type = match sel {
-                0 => NoiseType::White,
-                1 => NoiseType::Pink,
-                _ => NoiseType::CyberBit,
-            };
+            param_select(
+                ui,
+                setter,
+                &noise.noise_type,
+                &["WHITE", "PINK", "CYBERBIT"],
+                96.0,
+            );
         });
         ui.horizontal(|ui| {
-            draw_rotary_knob(
-                ui,
-                &mut model.noise_level,
-                0.0..=1.0,
-                "N LVL",
-                CyberTheme::NEON_CYAN,
-            );
-            draw_rotary_knob(
-                ui,
-                &mut model.noise_pan,
-                -1.0..=1.0,
-                "N PAN",
-                CyberTheme::NEON_CYAN,
-            );
+            knob_f(ui, setter, &noise.level, "N LVL", CyberTheme::NEON_CYAN);
+            knob_f(ui, setter, &noise.pan, "N PAN", CyberTheme::NEON_CYAN);
         });
     });
 }
 
-fn draw_filter_card(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f32) {
+fn draw_filter_card(
+    ui: &mut Ui,
+    setter: &ParamSetter,
+    rect: Rect,
+    filter: &FilterParams,
+    cutoff: &nih_plug::prelude::FloatParam,
+    resonance: &nih_plug::prelude::FloatParam,
+    t: f32,
+) {
     let color = CyberTheme::NEON_AMBER;
-    let f = &mut state.model.filter;
     panel(ui, rect, color, "04", "MULTIMODE FILTER", t, |ui| {
         ui.horizontal(|ui| {
-            small_chip(ui, &mut f.enabled, "ON", color, 44.0);
-            let kinds = [
-                "LP 12", "LP 24", "HP 12", "HP 24", "BP 12", "BP 24", "NOTCH",
-            ];
-            let idx = match f.kind {
-                FilterType::LowPass12 => 0,
-                FilterType::LowPass24 => 1,
-                FilterType::HighPass12 => 2,
-                FilterType::HighPass24 => 3,
-                FilterType::BandPass12 => 4,
-                FilterType::BandPass24 => 5,
-                FilterType::Notch => 6,
-            };
-            let mut sel = idx;
-            ComboBox::from_id_salt("filter_type")
-                .selected_text(kinds[idx])
-                .width(82.0)
-                .show_ui(ui, |ui| {
-                    for (i, k) in kinds.iter().enumerate() {
-                        ui.selectable_value(&mut sel, i, *k);
-                    }
-                });
-            f.kind = FilterType::from_index(sel);
+            param_chip(ui, setter, &filter.enabled, "ON", color, 44.0);
+            param_select(
+                ui,
+                setter,
+                &filter.filter_type,
+                &[
+                    "LP 12", "LP 24", "HP 12", "HP 24", "BP 12", "BP 24", "NOTCH",
+                ],
+                82.0,
+            );
             ui.label(
                 RichText::new("ZDF")
                     .color(CyberTheme::TEXT_DIM)
@@ -831,11 +869,17 @@ fn draw_filter_card(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f32)
             );
         });
         ui.horizontal(|ui| {
-            draw_rotary_knob_log(ui, &mut f.cutoff, 20.0..=18000.0, "CUTOFF", color);
-            draw_rotary_knob(ui, &mut f.reso, 0.0..=1.0, "RESO", color);
-            draw_rotary_knob(ui, &mut f.drive, 1.0..=4.0, "DRIVE", CyberTheme::NEON_PINK);
-            draw_rotary_knob(ui, &mut f.env_amount, -1.0..=1.0, "ENV MOD", color);
-            draw_rotary_knob(ui, &mut f.key, 0.0..=1.0, "KEY", CyberTheme::NEON_CYAN);
+            knob_f(ui, setter, cutoff, "CUTOFF", color);
+            knob_f(ui, setter, resonance, "RESO", color);
+            knob_f(ui, setter, &filter.drive, "DRIVE", CyberTheme::NEON_PINK);
+            knob_f(ui, setter, &filter.env_amount, "ENV MOD", color);
+            knob_f(
+                ui,
+                setter,
+                &filter.key_tracking,
+                "KEY",
+                CyberTheme::NEON_CYAN,
+            );
         });
         ui.horizontal(|ui| {
             ui.label(
@@ -844,29 +888,61 @@ fn draw_filter_card(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f32)
                     .monospace()
                     .size(7.0),
             );
-            small_chip(ui, &mut f.route_osc1, "OSC1", CyberTheme::NEON_CYAN, 52.0);
-            small_chip(
+            param_chip(
                 ui,
-                &mut f.route_osc2,
+                setter,
+                &filter.route_osc1,
+                "OSC1",
+                CyberTheme::NEON_CYAN,
+                52.0,
+            );
+            param_chip(
+                ui,
+                setter,
+                &filter.route_osc2,
                 "OSC2",
                 CyberTheme::NEON_MAGENTA,
                 52.0,
             );
-            small_chip(ui, &mut f.route_sub, "SUB", CyberTheme::NEON_LIME, 44.0);
-            small_chip(
+            param_chip(
                 ui,
-                &mut f.route_noise,
+                setter,
+                &filter.route_sub,
+                "SUB",
+                CyberTheme::NEON_LIME,
+                44.0,
+            );
+            param_chip(
+                ui,
+                setter,
+                &filter.route_noise,
                 "NOISE",
                 CyberTheme::NEON_AMBER,
                 56.0,
             );
-            draw_rotary_knob(ui, &mut f.vel, 0.0..=1.0, "VEL", CyberTheme::NEON_CYAN);
+            knob_f(
+                ui,
+                setter,
+                &filter.vel_tracking,
+                "VEL",
+                CyberTheme::NEON_CYAN,
+            );
         });
-        // ZDF magnitude response, so the filter can be read at a glance.
         let h = ui.available_height().min(52.0).max(34.0);
         if h > 30.0 {
-            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
-            draw_filter_response(ui, rect, f.kind, f.cutoff, f.reso, color);
+            let (resp_rect, _) =
+                ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
+            let kind = crate::audio::filter::FilterType::from_index(
+                filter.filter_type.value().clamp(0, 6) as usize,
+            );
+            draw_filter_response(
+                ui,
+                resp_rect,
+                kind,
+                cutoff.value(),
+                resonance.value(),
+                color,
+            );
         }
     });
 }
@@ -874,11 +950,12 @@ fn draw_filter_card(ui: &mut Ui, rect: Rect, state: &mut GuiSharedState, t: f32)
 fn draw_filter_response(
     ui: &mut Ui,
     rect: Rect,
-    kind: FilterType,
+    kind: crate::audio::filter::FilterType,
     cutoff: f32,
     reso: f32,
     color: Color32,
 ) {
+    use crate::audio::filter::FilterType;
     let p = ui.painter();
     p.rect_filled(rect, 2.0, Color32::from_rgb(4, 2, 11));
     p.rect_stroke(
@@ -887,7 +964,6 @@ fn draw_filter_response(
         Stroke::new(1.0_f32, CyberTheme::alpha(color, 35)),
         StrokeKind::Inside,
     );
-    // Log-frequency grid.
     for i in 1..6 {
         let x = rect.min.x + rect.width() * i as f32 / 6.0;
         p.line_segment(
@@ -943,7 +1019,6 @@ fn draw_filter_response(
     for i in 0..pts.len() - 1 {
         p.line_segment([pts[i], pts[i + 1]], Stroke::new(1.3_f32, color));
     }
-    // Cutoff marker.
     let ct = (cutoff.max(f_min) / f_min).ln() / (f_max / f_min).ln();
     let cx = rect.min.x + 2.0 + ct.clamp(0.0, 1.0) * (rect.width() - 4.0);
     p.line_segment(
@@ -952,14 +1027,7 @@ fn draw_filter_response(
     );
 }
 
-fn draw_scope_card(
-    ui: &mut Ui,
-    rect: Rect,
-    scope: &[f32],
-    active_voices: usize,
-    _state: &mut GuiSharedState,
-    t: f32,
-) {
+fn draw_scope_card(ui: &mut Ui, rect: Rect, scope: &[f32], active_voices: usize, t: f32) {
     let color = CyberTheme::NEON_CYAN;
     panel(ui, rect, color, "05", "SIGNAL MONITOR", t, |ui| {
         ui.horizontal(|ui| {
@@ -992,28 +1060,44 @@ fn draw_scope_card(
 
 fn draw_env_card(
     ui: &mut Ui,
+    setter: &ParamSetter,
     rect: Rect,
     index: &str,
     title: &str,
     color: Color32,
-    env: &mut EnvUi,
+    env: &EnvParams,
     t: f32,
 ) {
     panel(ui, rect, color, index, title, t, |ui| {
-        // ADSR curve
         let (curve_rect, _) =
             ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::hover());
-        draw_adsr(ui, curve_rect, env, color);
+        draw_adsr(
+            ui,
+            curve_rect,
+            env.attack.value(),
+            env.decay.value(),
+            env.sustain.value(),
+            env.release.value(),
+            color,
+        );
         ui.horizontal(|ui| {
-            draw_rotary_knob_log(ui, &mut env.attack, 0.001..=5.0, "ATK", color);
-            draw_rotary_knob_log(ui, &mut env.decay, 0.01..=5.0, "DEC", color);
-            draw_rotary_knob(ui, &mut env.sustain, 0.0..=1.0, "SUS", color);
-            draw_rotary_knob_log(ui, &mut env.release, 0.01..=5.0, "REL", color);
+            knob_f(ui, setter, &env.attack, "ATK", color);
+            knob_f(ui, setter, &env.decay, "DEC", color);
+            knob_f(ui, setter, &env.sustain, "SUS", color);
+            knob_f(ui, setter, &env.release, "REL", color);
         });
     });
 }
 
-fn draw_adsr(ui: &mut Ui, rect: Rect, env: &EnvUi, color: Color32) {
+fn draw_adsr(
+    ui: &mut Ui,
+    rect: Rect,
+    attack: f32,
+    decay: f32,
+    sustain: f32,
+    release: f32,
+    color: Color32,
+) {
     let p = ui.painter();
     p.rect_filled(rect, 2.0, Color32::from_rgb(4, 2, 11));
     p.rect_stroke(
@@ -1030,21 +1114,17 @@ fn draw_adsr(ui: &mut Ui, rect: Rect, env: &EnvUi, color: Color32) {
         );
     }
 
-    let total = env.attack + env.decay + 0.6 + env.release;
-    let a = (env.attack / total).clamp(0.02, 0.5);
-    let d = (env.decay / total).clamp(0.02, 0.4);
-    let r = (env.release / total).clamp(0.03, 0.5);
-    let sustain = env.sustain.clamp(0.0, 1.0);
+    let total = attack + decay + 0.6 + release;
+    let a = (attack / total).clamp(0.02, 0.5);
+    let d = (decay / total).clamp(0.02, 0.4);
+    let r = (release / total).clamp(0.03, 0.5);
+    let sustain = sustain.clamp(0.0, 1.0);
     let (x0, y0) = (rect.min.x + 4.0, rect.max.y - 3.0);
     let w = rect.width() - 8.0;
     let h = rect.height() - 7.0;
     let xa = x0 + w * a;
     let xd = xa + w * d;
-    let xs = rect.max.x - 4.0 - w * r;
-    if xs < xd {
-        // long release: keep the sustain segment short
-    }
-    let xs = xs.max(xd);
+    let xs = (rect.max.x - 4.0 - w * r).max(xd);
 
     let pts = vec![
         pos2(x0, y0),
@@ -1067,158 +1147,142 @@ fn draw_adsr(ui: &mut Ui, rect: Rect, env: &EnvUi, color: Color32) {
     }
 }
 
-fn draw_fx_card(ui: &mut Ui, rect: Rect, fx: &mut FxUi, t: f32) {
+#[allow(clippy::too_many_arguments)]
+fn draw_fx_card(
+    ui: &mut Ui,
+    setter: &ParamSetter,
+    rect: Rect,
+    dist: &DistParams,
+    chorus: &ChorusParams,
+    delay: &DelayParams,
+    reverb: &crate::params::ReverbParams,
+    gate: &nih_plug::prelude::BoolParam,
+    t: f32,
+) {
     let color = CyberTheme::NEON_PURPLE;
     panel(ui, rect, color, "08", "FX RACK // SIGNAL CHAIN", t, |ui| {
-        // 1. Distortion
         ui.horizontal(|ui| {
-            small_chip(ui, &mut fx.dist_enabled, "DIST", CyberTheme::NEON_RED, 58.0);
-            let modes = ["OVERDRIVE", "CRUSHER", "FIRE", "GRIND"];
-            let idx = match fx.dist_mode {
-                DistortionMode::SoftOverdrive => 0,
-                DistortionMode::BitCrusher => 1,
-                DistortionMode::FireAmp => 2,
-                DistortionMode::GrindAmp => 3,
-            };
-            let mut sel = idx;
-            ComboBox::from_id_salt("dist_mode")
-                .selected_text(modes[idx])
-                .width(86.0)
-                .show_ui(ui, |ui| {
-                    for (i, m) in modes.iter().enumerate() {
-                        ui.selectable_value(&mut sel, i, *m);
-                    }
-                });
-            fx.dist_mode = match sel {
-                0 => DistortionMode::SoftOverdrive,
-                1 => DistortionMode::BitCrusher,
-                2 => DistortionMode::FireAmp,
-                _ => DistortionMode::GrindAmp,
-            };
-            neon_slider(
+            param_chip(
                 ui,
-                &mut fx.dist_amount,
-                0.0..=1.0,
+                setter,
+                &dist.enabled,
+                "DIST",
+                CyberTheme::NEON_RED,
+                58.0,
+            );
+            param_select(
+                ui,
+                setter,
+                &dist.mode,
+                &["OVERDRIVE", "CRUSHER", "FIRE", "GRIND"],
+                86.0,
+            );
+            param_slider(
+                ui,
+                setter,
+                &dist.amount,
                 "DRIVE",
                 180.0,
                 CyberTheme::NEON_RED,
             );
-            neon_slider(
-                ui,
-                &mut fx.dist_mix,
-                0.0..=1.0,
-                "MIX",
-                150.0,
-                CyberTheme::NEON_RED,
-            );
+            param_slider(ui, setter, &dist.mix, "MIX", 150.0, CyberTheme::NEON_RED);
         });
-        // 2. Chorus
         ui.horizontal(|ui| {
-            small_chip(
+            param_chip(
                 ui,
-                &mut fx.chorus_enabled,
+                setter,
+                &chorus.enabled,
                 "CHORUS",
                 CyberTheme::NEON_CYAN,
                 68.0,
             );
-            neon_slider(
+            param_slider(ui, setter, &chorus.mix, "MIX", 180.0, CyberTheme::NEON_CYAN);
+            param_slider(
                 ui,
-                &mut fx.chorus_mix,
-                0.0..=1.0,
-                "MIX",
-                180.0,
-                CyberTheme::NEON_CYAN,
-            );
-            neon_slider(
-                ui,
-                &mut fx.chorus_rate,
-                0.1..=8.0,
+                setter,
+                &chorus.rate,
                 "RATE",
                 150.0,
                 CyberTheme::NEON_CYAN,
             );
         });
-        // 3. Ping-pong delay
         ui.horizontal(|ui| {
-            small_chip(
+            param_chip(
                 ui,
-                &mut fx.delay_enabled,
+                setter,
+                &delay.enabled,
                 "DELAY",
                 CyberTheme::NEON_AMBER,
                 58.0,
             );
-            small_chip(
+            param_chip(
                 ui,
-                &mut fx.delay_pingpong,
+                setter,
+                &delay.pingpong,
                 "P-P",
                 CyberTheme::NEON_AMBER,
                 48.0,
             );
-            neon_slider(
+            param_slider(ui, setter, &delay.mix, "MIX", 150.0, CyberTheme::NEON_AMBER);
+            param_slider(
                 ui,
-                &mut fx.delay_mix,
-                0.0..=1.0,
-                "MIX",
-                150.0,
-                CyberTheme::NEON_AMBER,
-            );
-            neon_slider(
-                ui,
-                &mut fx.delay_fb,
-                0.0..=0.9,
+                setter,
+                &delay.feedback,
                 "FDBK",
                 130.0,
                 CyberTheme::NEON_AMBER,
             );
-            neon_slider(
+            param_slider(
                 ui,
-                &mut fx.delay_time,
-                20.0..=1200.0,
+                setter,
+                &delay.time,
                 "TIME",
                 120.0,
                 CyberTheme::NEON_AMBER,
             );
         });
-        // 4. Reverb
         ui.horizontal(|ui| {
-            small_chip(
+            param_chip(
                 ui,
-                &mut fx.reverb_enabled,
+                setter,
+                &reverb.enabled,
                 "REVERB",
                 CyberTheme::NEON_PURPLE,
                 68.0,
             );
-            neon_slider(
+            param_slider(
                 ui,
-                &mut fx.reverb_size,
-                0.0..=1.0,
+                setter,
+                &reverb.room_size,
                 "ROOM",
                 180.0,
                 CyberTheme::NEON_PURPLE,
             );
-            neon_slider(
+            param_slider(
                 ui,
-                &mut fx.reverb_mix,
-                0.0..=1.0,
+                setter,
+                &reverb.mix,
                 "MIX",
                 150.0,
                 CyberTheme::NEON_PURPLE,
             );
         });
-        // 5. Trance gate
         ui.horizontal(|ui| {
-            small_chip(
+            param_chip(
                 ui,
-                &mut fx.gate_enabled,
+                setter,
+                gate,
                 "TRANCE GATE",
                 CyberTheme::NEON_LIME,
                 104.0,
             );
-            ui.label(
-                RichText::new("16-STEP CHOPPER // TEMPO LOCKED")
-                    .color(CyberTheme::TEXT_DIM)
-                    .monospace()
-                    .size(7.0),
+            param_chip(
+                ui,
+                setter,
+                &delay.sync,
+                "TEMPO LOCK",
+                CyberTheme::NEON_AMBER,
+                88.0,
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.label(
@@ -1242,15 +1306,14 @@ pub(crate) fn neon_button(text: &str, color: Color32, filled: bool) -> Button<'s
         .monospace()
         .strong()
         .size(9.5);
-    let btn = Button::new(txt)
+    Button::new(txt)
         .fill(if filled {
             color
         } else {
             CyberTheme::alpha(color, 18)
         })
         .stroke(Stroke::new(1.0_f32, color))
-        .corner_radius(2.0);
-    btn
+        .corner_radius(2.0)
 }
 
 pub(crate) fn category_button(text: &str, selected: bool, color: Color32) -> Button<'static> {
@@ -1280,78 +1343,7 @@ pub(crate) fn category_button(text: &str, selected: bool, color: Color32) -> But
         .corner_radius(1.5)
 }
 
-fn small_chip(ui: &mut Ui, on: &mut bool, label: &str, color: Color32, width: f32) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, 17.0), Sense::click());
-    if resp.clicked() {
-        *on = !*on;
-    }
-    CyberTheme::chip(ui.painter(), rect, *on, color, label);
-    resp.on_hover_cursor(nih_plug_egui::egui::CursorIcon::PointingHand)
-}
-
-pub(crate) fn neon_slider(
-    ui: &mut Ui,
-    value: &mut f32,
-    range: std::ops::RangeInclusive<f32>,
-    label: &str,
-    width: f32,
-    color: Color32,
-) -> Response {
-    let (rect, mut resp) = ui.allocate_exact_size(vec2(width, 22.0), Sense::click_and_drag());
-    let min = *range.start();
-    let max = *range.end();
-    let span = (max - min).max(1e-6);
-    let track = Rect::from_min_max(
-        pos2(rect.min.x + 38.0, rect.center().y - 2.5),
-        pos2(rect.max.x - 30.0, rect.center().y + 2.5),
-    );
-
-    if (resp.dragged() || resp.clicked()) && track.width() > 1.0 {
-        if let Some(p) = resp.interact_pointer_pos() {
-            let n = ((p.x - track.min.x) / track.width()).clamp(0.0, 1.0);
-            *value = min + n * span;
-            resp.mark_changed();
-        }
-    }
-
-    let norm = ((*value - min) / span).clamp(0.0, 1.0);
-    let p = ui.painter();
-    p.text(
-        pos2(rect.min.x, rect.center().y),
-        nih_plug_egui::egui::Align2::LEFT_CENTER,
-        label,
-        nih_plug_egui::egui::FontId::monospace(7.0),
-        CyberTheme::TEXT_MUTED,
-    );
-    p.rect_filled(track, 1.0, Color32::from_rgb(24, 14, 42));
-    let fill = Rect::from_min_max(
-        track.min,
-        pos2(track.min.x + track.width() * norm, track.max.y),
-    );
-    p.rect_filled(fill, 1.0, CyberTheme::alpha(color, 55));
-    p.line_segment(
-        [pos2(fill.max.x, track.min.y), pos2(fill.max.x, track.max.y)],
-        Stroke::new(1.6_f32, color),
-    );
-    p.circle_filled(pos2(fill.max.x, track.center().y), 2.4, color);
-    p.text(
-        pos2(rect.max.x, rect.center().y),
-        nih_plug_egui::egui::Align2::RIGHT_CENTER,
-        if span > 100.0 {
-            format!("{:.0}", value)
-        } else if span > 10.0 {
-            format!("{:.1}", value)
-        } else {
-            format!("{:.2}", value)
-        },
-        nih_plug_egui::egui::FontId::monospace(6.8),
-        CyberTheme::TEXT_PRIMARY,
-    );
-
-    resp
-}
-
-fn randomize_steps(steps: &mut [crate::audio::step_sequencer::Step; 64], seed: u32) {
+fn randomize_steps(steps: &mut [Step], seed: u32) {
     let scale = [0i8, 2, 3, 5, 7, 8, 10, 12, 15, 17, 19, 22, 24];
     let mut s = seed | 1;
     for (i, step) in steps.iter_mut().enumerate() {
@@ -1368,7 +1360,6 @@ fn randomize_steps(steps: &mut [crate::audio::step_sequencer::Step; 64], seed: u
             84 + ((s >> 4) % 34) as u8
         };
         step.note_offset = scale[((s >> 7) as usize) % scale.len()] - 12;
-        // Keep a strong downbeat every 4 steps.
         if i % 4 == 0 {
             step.gate = true;
             step.note_offset = 0;

@@ -7,7 +7,10 @@ use crate::audio::fx::distortion::DistortionMode;
 use crate::audio::oscillator::{NoiseType, SubWave};
 use crate::audio::step_sequencer::{SeqMode, SeqRate, Step, MAX_STEPS};
 use crate::audio::SynthEngine;
+use crate::params::{PatternState, ReplicantWaveParams};
+use nih_plug::prelude::{BoolParam, FloatParam, IntParam, ParamSetter};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SynthPreset {
@@ -213,5 +216,162 @@ impl SynthPreset {
         for (i, step) in self.seq_steps.iter().take(MAX_STEPS).enumerate() {
             engine.sequencer.steps[i] = *step;
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Host-parameter application
+// ---------------------------------------------------------------------------
+
+fn set_f(setter: &ParamSetter, p: &FloatParam, v: f32) {
+    setter.begin_set_parameter(p);
+    setter.set_parameter(p, v);
+    setter.end_set_parameter(p);
+}
+
+fn set_i(setter: &ParamSetter, p: &IntParam, v: i32) {
+    setter.begin_set_parameter(p);
+    setter.set_parameter(p, v);
+    setter.end_set_parameter(p);
+}
+
+fn set_b(setter: &ParamSetter, p: &BoolParam, v: bool) {
+    setter.begin_set_parameter(p);
+    setter.set_parameter(p, v);
+    setter.end_set_parameter(p);
+}
+
+impl SynthPreset {
+    /// Steps of this patch, padded/truncated to the full 64-step grid.
+    pub fn steps(&self) -> Vec<Step> {
+        let mut steps = vec![
+            Step {
+                gate: false,
+                ..Step::default()
+            };
+            MAX_STEPS
+        ];
+        for (dst, src) in steps.iter_mut().zip(self.seq_steps.iter()) {
+            *dst = *src;
+        }
+        steps
+    }
+
+    /// Write every patch value into the host-visible parameters.
+    ///
+    /// This is the path the editor uses, which means loading a preset is
+    /// visible to the host, gets recorded as automation in write mode, and is
+    /// saved with the session. The transport is never started.
+    pub fn apply_to_params(&self, setter: &ParamSetter, p: &ReplicantWaveParams) {
+        // OSC 1
+        set_b(setter, &p.osc1.enabled, self.osc1_enabled);
+        set_i(setter, &p.osc1.table, self.osc1_table as i32);
+        set_f(setter, &p.osc1.position, self.osc1_pos);
+        set_f(setter, &p.osc1.tune, self.osc1_tune);
+        set_f(setter, &p.osc1.fine, self.osc1_fine);
+        set_i(setter, &p.osc1.unison, self.osc1_unison as i32);
+        set_f(setter, &p.osc1.detune, self.osc1_detune);
+        set_f(setter, &p.osc1.spread, self.osc1_spread);
+        set_f(setter, &p.osc1.formant, self.osc1_formant);
+        set_f(setter, &p.osc1.bend, self.osc1_bend);
+        set_f(setter, &p.osc1.level, self.osc1_level);
+        set_f(setter, &p.osc1.pan, self.osc1_pan);
+
+        // OSC 2
+        set_b(setter, &p.osc2.enabled, self.osc2_enabled);
+        set_i(setter, &p.osc2.table, self.osc2_table as i32);
+        set_f(setter, &p.osc2.position, self.osc2_pos);
+        set_f(setter, &p.osc2.tune, self.osc2_tune);
+        set_f(setter, &p.osc2.fine, self.osc2_fine);
+        set_i(setter, &p.osc2.unison, self.osc2_unison as i32);
+        set_f(setter, &p.osc2.detune, self.osc2_detune);
+        set_f(setter, &p.osc2.spread, self.osc2_spread);
+        set_f(setter, &p.osc2.formant, self.osc2_formant);
+        set_f(setter, &p.osc2.bend, self.osc2_bend);
+        set_f(setter, &p.osc2.level, self.osc2_level);
+        set_f(setter, &p.osc2.pan, self.osc2_pan);
+
+        // SUB / NOISE
+        set_b(setter, &p.sub.enabled, self.sub_enabled);
+        set_i(setter, &p.sub.wave, self.sub_wave as i32);
+        set_i(setter, &p.sub.octave, self.sub_octave as i32);
+        set_f(setter, &p.sub.level, self.sub_level);
+        set_f(setter, &p.sub.pan, self.sub_pan);
+
+        set_b(setter, &p.noise.enabled, self.noise_enabled);
+        set_i(setter, &p.noise.noise_type, self.noise_type as i32);
+        set_f(setter, &p.noise.level, self.noise_level);
+        set_f(setter, &p.noise.pan, self.noise_pan);
+
+        // FILTER
+        set_b(setter, &p.filter.enabled, self.filter_enabled);
+        set_i(setter, &p.filter.filter_type, self.filter_type as i32);
+        set_f(setter, &p.cutoff, self.filter_cutoff);
+        set_f(setter, &p.resonance, self.filter_reso);
+        set_f(setter, &p.filter.drive, self.filter_drive);
+        set_f(setter, &p.filter.key_tracking, self.filter_key);
+        set_f(setter, &p.filter.vel_tracking, self.filter_vel);
+        set_f(setter, &p.filter.env_amount, self.filter_env_amount);
+        // A patch always routes every source through the filter; the routing
+        // matrix is a performance control the user can restrict afterwards.
+        set_b(setter, &p.filter.route_osc1, true);
+        set_b(setter, &p.filter.route_osc2, true);
+        set_b(setter, &p.filter.route_sub, true);
+        set_b(setter, &p.filter.route_noise, true);
+
+        // ENVELOPES
+        set_f(setter, &p.amp_env.attack, self.amp_attack);
+        set_f(setter, &p.amp_env.decay, self.amp_decay);
+        set_f(setter, &p.amp_env.sustain, self.amp_sustain);
+        set_f(setter, &p.amp_env.release, self.amp_release);
+
+        set_f(setter, &p.filter_env.attack, self.filter_attack);
+        set_f(setter, &p.filter_env.decay, self.filter_decay);
+        set_f(setter, &p.filter_env.sustain, self.filter_sustain);
+        set_f(setter, &p.filter_env.release, self.filter_release);
+
+        // FX
+        set_b(setter, &p.dist.enabled, self.dist_enabled);
+        set_i(setter, &p.dist.mode, self.dist_mode as i32);
+        set_f(setter, &p.dist.amount, self.dist_amount);
+        set_f(setter, &p.dist.mix, self.dist_mix);
+
+        set_b(setter, &p.chorus.enabled, self.chorus_enabled);
+        set_f(setter, &p.chorus.rate, self.chorus_rate);
+        set_f(setter, &p.chorus.depth, self.chorus_depth);
+        set_f(setter, &p.chorus.mix, self.chorus_mix);
+
+        set_b(setter, &p.delay.enabled, self.delay_enabled);
+        set_b(setter, &p.delay.sync, self.delay_sync);
+        set_b(setter, &p.delay.pingpong, true);
+        set_f(setter, &p.delay.time, self.delay_time);
+        set_f(setter, &p.delay.feedback, self.delay_fb);
+        set_f(setter, &p.delay.damping, self.delay_damp);
+        set_f(setter, &p.delay.mix, self.delay_mix);
+
+        set_b(setter, &p.reverb.enabled, self.reverb_enabled);
+        set_f(setter, &p.reverb.room_size, self.reverb_size);
+        set_f(setter, &p.reverb.damping, self.reverb_damp);
+        set_f(setter, &p.reverb.mix, self.reverb_mix);
+
+        set_b(setter, &p.gate.enabled, self.gate_enabled);
+
+        // SEQUENCER: patch content only, transport stays stopped.
+        set_i(setter, &p.seq.mode, self.seq_mode as i32);
+        set_i(
+            setter,
+            &p.seq.length,
+            self.seq_length.clamp(1, MAX_STEPS) as i32,
+        );
+        set_i(setter, &p.seq.rate, self.seq_rate as i32);
+        set_f(setter, &p.seq.swing, self.seq_swing);
+        set_b(setter, &p.seq.running, false);
+    }
+
+    /// Replace the persisted pattern with this patch's steps.
+    pub fn write_pattern(&self, pattern: &Arc<parking_lot::Mutex<PatternState>>) {
+        let mut guard = pattern.lock();
+        guard.steps = self.steps();
+        guard.version = guard.version.wrapping_add(1);
     }
 }

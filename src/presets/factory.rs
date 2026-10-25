@@ -274,7 +274,7 @@ fn preset_arasaka_pad() -> SynthPreset {
         seq_length: 16,
         seq_rate: 3,
         seq_swing: 0.0,
-        seq_steps: vec![Step::default(); MAX_STEPS],
+        seq_steps: create_default_steps(&[]),
     }
 }
 
@@ -358,7 +358,7 @@ fn preset_neon_blade_lead() -> SynthPreset {
         seq_length: 16,
         seq_rate: 3,
         seq_swing: 0.0,
-        seq_steps: vec![Step::default(); MAX_STEPS],
+        seq_steps: create_default_steps(&[]),
     }
 }
 
@@ -634,7 +634,7 @@ fn preset_darksynth_stab() -> SynthPreset {
         seq_length: 16,
         seq_rate: 3,
         seq_swing: 0.0,
-        seq_steps: vec![Step::default(); MAX_STEPS],
+        seq_steps: create_default_steps(&[]),
     }
 }
 
@@ -718,7 +718,7 @@ fn preset_corpo_dystopia() -> SynthPreset {
         seq_length: 16,
         seq_rate: 3,
         seq_swing: 0.0,
-        seq_steps: vec![Step::default(); MAX_STEPS],
+        seq_steps: create_default_steps(&[]),
     }
 }
 
@@ -904,7 +904,7 @@ fn preset_ghost_wire_choir() -> SynthPreset {
         seq_length: 16,
         seq_rate: 3,
         seq_swing: 0.0,
-        seq_steps: vec![Step::default(); MAX_STEPS],
+        seq_steps: create_default_steps(&[]),
     }
 }
 
@@ -987,7 +987,7 @@ fn preset_subdermal_808() -> SynthPreset {
         seq_length: 16,
         seq_rate: 3,
         seq_swing: 0.0,
-        seq_steps: vec![Step::default(); MAX_STEPS],
+        seq_steps: create_default_steps(&[]),
     }
 }
 
@@ -1070,7 +1070,7 @@ fn preset_synthetic_tears() -> SynthPreset {
         seq_length: 16,
         seq_rate: 3,
         seq_swing: 0.0,
-        seq_steps: vec![Step::default(); MAX_STEPS],
+        seq_steps: create_default_steps(&[]),
     }
 }
 
@@ -1339,7 +1339,7 @@ fn preset_overclocked_sync() -> SynthPreset {
         seq_length: 16,
         seq_rate: 3,
         seq_swing: 0.0,
-        seq_steps: vec![Step::default(); MAX_STEPS],
+        seq_steps: create_default_steps(&[]),
     }
 }
 
@@ -1422,7 +1422,7 @@ fn preset_afterlife_rave() -> SynthPreset {
         seq_length: 16,
         seq_rate: 3,
         seq_swing: 0.0,
-        seq_steps: vec![Step::default(); MAX_STEPS],
+        seq_steps: create_default_steps(&[]),
     }
 }
 
@@ -1506,7 +1506,7 @@ fn preset_braindance_memory() -> SynthPreset {
         seq_length: 16,
         seq_rate: 3,
         seq_swing: 0.0,
-        seq_steps: vec![Step::default(); MAX_STEPS],
+        seq_steps: create_default_steps(&[]),
     }
 }
 

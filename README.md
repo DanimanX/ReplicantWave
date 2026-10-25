@@ -75,6 +75,14 @@ Featuring **2 multi-frame wavetable oscillators**, a **64-step neon step-matrix 
   - Per-source routing matrix: route or bypass OSC 1, OSC 2, Sub, and Noise independently.
   - Key tracking and Velocity tracking.
 
+### 🎛️ Full Host Automation (84 parameters)
+- **Every control is a parameter.** All 84 knobs, toggles and selectors are exposed to VST3/CLAP/AU, so the DAW can automate them, MIDI-learn them from the generic UI, and remote-control them from hardware — not just master, cutoff and resonance.
+- **Tidy parameter tree** with host-side groups: `Oscillator 1`, `Oscillator 2`, `Sub Oscillator`, `Noise`, `Filter`, `Amp Envelope`, `Filter Envelope`, `Distortion`, `Chorus`, `Delay`, `Reverb`, `Trance Gate`, `Sequencer`.
+- **Gesture-correct editing**: knobs send begin/set/end parameter gestures, so touch/latch automation recording works and the host shows the automated value moving in the plugin.
+- **One-way data flow**: the editor writes parameters only, and the audio thread mirrors them into the DSP engine once per block. Automation, presets and the GUI can never disagree.
+- **Legacy IDs preserved**: `gain`, `cutoff` and `resonance` keep their original IDs so automation written with 1.0.x still resolves.
+- **Session restore**: the 64-step pattern is persisted with the host session (it is pattern data, not a control surface), so reopening a project restores your sequence.
+
 ### 🎛️ Neon HUD Controls
 - **Rotary knobs**: 11 machined tick marks, dark glass cap, glowing value arc, bright needle and hover readout. Mouse-wheel support, fine-tune drag (`Shift`), and double-click reset.
 - **HUD sliders**: compact glowing horizontal controls for the FX rack, with live value readouts.

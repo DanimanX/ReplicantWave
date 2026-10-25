@@ -1,9 +1,13 @@
-//! Cyberpunk Analog Hardware Rotary Knob Widget.
+//! Cyberpunk Neon HUD rotary knobs and compact controls.
 //!
-//! Provides authentic analog hardware synthesizer potentiometers with metallic knurled chassis,
-//! glowing neon indicator arcs, smooth 3D metallic caps, fine-tuning modifiers, and mouse-wheel support.
+//! Two layers:
+//! - `knob_core` / `slider_core` draw and edit a **normalised** value.
+//! - `knob_f` / `knob_i` / `param_chip` / `param_select` / `param_slider` bind
+//!   that to a `Param` and write it back through the host `ParamSetter`, so
+//!   every control is automatable, MIDI-learnable and recorded by the DAW.
 
 use super::theme::CyberTheme;
+use nih_plug::prelude::{BoolParam, FloatParam, IntParam, Param, ParamSetter};
 use nih_plug_egui::egui::{pos2, Color32, FontId, Pos2, Response, Sense, Stroke, Ui, Vec2};
 use std::f32::consts::PI;
 
@@ -11,120 +15,201 @@ const ARC_START_ANGLE: f32 = -0.75 * PI; // 7 o'clock (-135 deg)
 const ARC_END_ANGLE: f32 = 0.75 * PI; // 5 o'clock (+135 deg)
 const ARC_TOTAL_SPAN: f32 = ARC_END_ANGLE - ARC_START_ANGLE; // 270 deg
 
-/// Draw a continuous float analog rotary knob.
-pub fn draw_rotary_knob(
+// ---------------------------------------------------------------------------
+// Param-bound widgets
+// ---------------------------------------------------------------------------
+
+/// Rotary knob bound to a `FloatParam`.
+pub fn knob_f(
     ui: &mut Ui,
-    value: &mut f32,
-    range: std::ops::RangeInclusive<f32>,
+    setter: &ParamSetter,
+    param: &FloatParam,
     label: &str,
     color: Color32,
 ) -> Response {
-    draw_knob_internal(ui, value, range, label, color, false, 14.0, None)
+    let mut norm = param.preview_normalized(param.value());
+    let readout = param.normalized_value_to_string(norm, true);
+    let resp = knob_core(ui, &mut norm, label, color, 14.0, Some(&readout));
+    commit_f32(setter, param, &resp, norm);
+    resp
 }
 
-/// Draw a logarithmic float analog rotary knob (ideal for frequency/cutoff, time).
-pub fn draw_rotary_knob_log(
+/// Rotary knob bound to an `IntParam` (discrete selector).
+pub fn knob_i(
     ui: &mut Ui,
-    value: &mut f32,
-    range: std::ops::RangeInclusive<f32>,
+    setter: &ParamSetter,
+    param: &IntParam,
     label: &str,
     color: Color32,
 ) -> Response {
-    draw_knob_internal(ui, value, range, label, color, true, 14.0, None)
+    let mut norm = param.preview_normalized(param.value());
+    let readout = param.normalized_value_to_string(norm, true);
+    let resp = knob_core(ui, &mut norm, label, color, 14.0, Some(&readout));
+    commit_i32(setter, param, &resp, norm);
+    resp
 }
 
-/// Draw an integer analog rotary knob (for unison, octaves, etc.).
-pub fn draw_rotary_knob_usize(
+fn commit_f32(setter: &ParamSetter, param: &FloatParam, resp: &Response, norm: f32) {
+    if resp.drag_started() {
+        setter.begin_set_parameter(param);
+    }
+    if resp.changed() {
+        let value = param.preview_plain(norm.clamp(0.0, 1.0));
+        let dragging = resp.dragged();
+        if !dragging && !resp.drag_started() {
+            setter.begin_set_parameter(param);
+        }
+        setter.set_parameter(param, value);
+        if !dragging {
+            setter.end_set_parameter(param);
+        }
+    }
+    if resp.drag_stopped() {
+        setter.end_set_parameter(param);
+    }
+}
+
+fn commit_i32(setter: &ParamSetter, param: &IntParam, resp: &Response, norm: f32) {
+    if resp.drag_started() {
+        setter.begin_set_parameter(param);
+    }
+    if resp.changed() {
+        let value = param.preview_plain(norm.clamp(0.0, 1.0));
+        let dragging = resp.dragged();
+        if !dragging && !resp.drag_started() {
+            setter.begin_set_parameter(param);
+        }
+        setter.set_parameter(param, value);
+        if !dragging {
+            setter.end_set_parameter(param);
+        }
+    }
+    if resp.drag_stopped() {
+        setter.end_set_parameter(param);
+    }
+}
+
+/// Neon chip toggle bound to a `BoolParam`.
+pub fn param_chip(
     ui: &mut Ui,
-    value: &mut usize,
-    range: std::ops::RangeInclusive<usize>,
+    setter: &ParamSetter,
+    param: &BoolParam,
     label: &str,
+    color: Color32,
+    width: f32,
+) -> Response {
+    let on = param.value();
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 17.0), Sense::click());
+    if resp.clicked() {
+        setter.begin_set_parameter(param);
+        setter.set_parameter(param, !on);
+        setter.end_set_parameter(param);
+    }
+    CyberTheme::chip(ui.painter(), rect, on, color, label);
+    resp.on_hover_cursor(nih_plug_egui::egui::CursorIcon::PointingHand)
+}
+
+/// Combo box bound to an `IntParam` with human readable names.
+pub fn param_select(
+    ui: &mut Ui,
+    setter: &ParamSetter,
+    param: &IntParam,
+    names: &[&str],
+    width: f32,
+) -> Response {
+    let current = param.value();
+    let text = names.get(current.max(0) as usize).copied().unwrap_or("—");
+
+    let mut chosen = None;
+    let resp = nih_plug_egui::egui::ComboBox::from_id_salt(("param_select", param.name()))
+        .selected_text(
+            nih_plug_egui::egui::RichText::new(text)
+                .monospace()
+                .size(9.0),
+        )
+        .width(width)
+        .show_ui(ui, |ui| {
+            for (i, name) in names.iter().enumerate() {
+                if ui.selectable_label(current == i as i32, *name).clicked() {
+                    chosen = Some(i as i32);
+                }
+            }
+        })
+        .response;
+
+    if let Some(i) = chosen {
+        setter.begin_set_parameter(param);
+        setter.set_parameter(param, i);
+        setter.end_set_parameter(param);
+    }
+    resp
+}
+
+/// Compact horizontal neon slider bound to a `FloatParam`.
+pub fn param_slider(
+    ui: &mut Ui,
+    setter: &ParamSetter,
+    param: &FloatParam,
+    label: &str,
+    width: f32,
     color: Color32,
 ) -> Response {
-    let min_f = *range.start() as f32;
-    let max_f = *range.end() as f32;
-    let mut f_val = *value as f32;
-
-    let response = draw_knob_internal(
-        ui,
-        &mut f_val,
-        min_f..=max_f,
-        label,
-        color,
-        false,
-        14.0,
-        None,
-    );
-    *value = f_val.round() as usize;
-    response
+    let mut norm = param.preview_normalized(param.value());
+    let text = param.normalized_value_to_string(norm, false);
+    let resp = slider_core(ui, &mut norm, label, width, color, &text);
+    commit_f32(setter, param, &resp, norm);
+    resp
 }
 
-/// Draw an i8 analog rotary knob (for pitch semitones, etc.) with custom note readout.
-pub fn draw_rotary_knob_i8(
-    ui: &mut Ui,
-    value: &mut i8,
-    range: std::ops::RangeInclusive<i8>,
-    label: &str,
-    color: Color32,
-) -> Response {
-    let min_f = *range.start() as f32;
-    let max_f = *range.end() as f32;
-    let mut f_val = *value as f32;
+// ---------------------------------------------------------------------------
+// Direct parameter writes (used for discrete buttons)
+// ---------------------------------------------------------------------------
 
-    let custom_val_str = format!("{:+}", *value);
-    let response = draw_knob_internal(
-        ui,
-        &mut f_val,
-        min_f..=max_f,
-        label,
-        color,
-        false,
-        13.0,
-        Some(&custom_val_str),
-    );
-    *value = f_val.round() as i8;
-    response
+/// Write an `IntParam` value, skipping the gesture when it is already set.
+pub fn write_i(setter: &ParamSetter, param: &IntParam, value: i32) {
+    if param.value() == value {
+        return;
+    }
+    setter.begin_set_parameter(param);
+    setter.set_parameter(param, value);
+    setter.end_set_parameter(param);
 }
 
-/// Draw a u8 analog rotary knob (for velocity, etc.).
-pub fn draw_rotary_knob_u8(
-    ui: &mut Ui,
-    value: &mut u8,
-    range: std::ops::RangeInclusive<u8>,
-    label: &str,
-    color: Color32,
-) -> Response {
-    let min_f = *range.start() as f32;
-    let max_f = *range.end() as f32;
-    let mut f_val = *value as f32;
-
-    let custom_val_str = format!("{}", *value);
-    let response = draw_knob_internal(
-        ui,
-        &mut f_val,
-        min_f..=max_f,
-        label,
-        color,
-        false,
-        13.0,
-        Some(&custom_val_str),
-    );
-    *value = f_val.round() as u8;
-    response
+/// Write a `BoolParam` value, skipping the gesture when it is already set.
+pub fn write_b(setter: &ParamSetter, param: &BoolParam, value: bool) {
+    if param.value() == value {
+        return;
+    }
+    setter.begin_set_parameter(param);
+    setter.set_parameter(param, value);
+    setter.end_set_parameter(param);
 }
 
-fn draw_knob_internal(
+/// Write a `FloatParam` value, skipping the gesture when it is already set.
+pub fn write_f(setter: &ParamSetter, param: &FloatParam, value: f32) {
+    if (param.value() - value).abs() < f32::EPSILON {
+        return;
+    }
+    setter.begin_set_parameter(param);
+    setter.set_parameter(param, value);
+    setter.end_set_parameter(param);
+}
+
+// ---------------------------------------------------------------------------
+// Normalised drawing cores
+// ---------------------------------------------------------------------------
+
+/// Draw and edit a rotary knob that operates on a 0..1 normalised value.
+pub fn knob_core(
     ui: &mut Ui,
-    value: &mut f32,
-    range: std::ops::RangeInclusive<f32>,
+    norm: &mut f32,
     label: &str,
     color: Color32,
-    is_log: bool,
     knob_radius: f32,
-    custom_readout: Option<&str>,
+    readout: Option<&str>,
 ) -> Response {
     let total_width = knob_radius * 2.0 + 10.0;
-    let total_height = knob_radius * 2.0 + 14.0; // Space for label below
+    let total_height = knob_radius * 2.0 + 14.0;
 
     let (rect, mut response) = ui.allocate_exact_size(
         Vec2::new(total_width, total_height),
@@ -132,21 +217,9 @@ fn draw_knob_internal(
     );
     let painter = ui.painter();
 
-    let min_val = *range.start();
-    let max_val = *range.end();
-
-    // Calculate normalized 0.0 .. 1.0 position
-    let mut norm_val = if is_log {
-        let log_min = min_val.ln();
-        let log_max = max_val.ln();
-        ((value.clamp(min_val, max_val).ln() - log_min) / (log_max - log_min)).clamp(0.0, 1.0)
-    } else {
-        ((*value - min_val) / (max_val - min_val)).clamp(0.0, 1.0)
-    };
-
+    let mut norm_val = norm.clamp(0.0, 1.0);
     let is_hovered = response.hovered() || response.dragged();
 
-    // Handle mouse drag interaction
     if response.dragged() {
         let delta = response.drag_delta();
         let sensitivity = if ui.input(|i| i.modifiers.shift) {
@@ -155,18 +228,10 @@ fn draw_knob_internal(
             0.005
         };
         norm_val = (norm_val - delta.y * sensitivity + delta.x * sensitivity * 0.4).clamp(0.0, 1.0);
-
-        *value = if is_log {
-            let log_min = min_val.ln();
-            let log_max = max_val.ln();
-            (log_min + norm_val * (log_max - log_min)).exp()
-        } else {
-            min_val + norm_val * (max_val - min_val)
-        };
+        *norm = norm_val;
         response.mark_changed();
     }
 
-    // Mouse scroll wheel support
     if response.hovered() {
         let scroll_delta = ui.input(|i| i.raw_scroll_delta.y);
         if scroll_delta.abs() > 0.1 {
@@ -176,40 +241,21 @@ fn draw_knob_internal(
                 0.02
             };
             norm_val = (norm_val + scroll_delta.signum() * step).clamp(0.0, 1.0);
-            *value = if is_log {
-                let log_min = min_val.ln();
-                let log_max = max_val.ln();
-                (log_min + norm_val * (log_max - log_min)).exp()
-            } else {
-                min_val + norm_val * (max_val - min_val)
-            };
+            *norm = norm_val;
             response.mark_changed();
         }
     }
 
-    // Double-click resets
     if response.double_clicked() {
-        norm_val = if min_val < 0.0 && max_val > 0.0 {
-            0.5
-        } else if is_log {
-            0.5
-        } else {
-            0.0
-        };
-        *value = if is_log {
-            let log_min = min_val.ln();
-            let log_max = max_val.ln();
-            (log_min + norm_val * (log_max - log_min)).exp()
-        } else {
-            min_val + norm_val * (max_val - min_val)
-        };
+        // Snap back to the centre of the sweep, a neutral and predictable reset.
+        norm_val = 0.5;
+        *norm = norm_val;
         response.mark_changed();
     }
 
-    // Knob Center Position
     let center = pos2(rect.center().x, rect.min.y + knob_radius + 3.0);
 
-    // 1. Ambient neon halo (stronger while hovered / dragged)
+    // 1. Ambient neon halo
     let halo_alpha = if is_hovered { 60 } else { 26 };
     painter.circle_filled(
         center,
@@ -217,7 +263,7 @@ fn draw_knob_internal(
         Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), halo_alpha),
     );
 
-    // 2. Tick ring — 11 machined marks around the 270° sweep
+    // 2. Tick ring
     for i in 0..=10 {
         let a = ARC_START_ANGLE + (i as f32 / 10.0) * ARC_TOTAL_SPAN - PI * 0.5;
         let r0 = knob_radius + 4.2;
@@ -274,7 +320,7 @@ fn draw_knob_internal(
         );
     }
 
-    // 4. Dark glass cap with a single neon rim.
+    // 4. Dark glass cap with a single neon rim
     let dial_radius = knob_radius - 0.5;
     painter.circle_filled(center, dial_radius, Color32::from_rgb(9, 5, 20));
     painter.circle_stroke(
@@ -294,16 +340,16 @@ fn draw_knob_internal(
 
     // 5. Indicator needle
     let dir = Vec2::new((cur_angle - PI * 0.5).cos(), (cur_angle - PI * 0.5).sin());
-    let p_start = center + dir * 2.0;
-    let p_end = center + dir * (dial_radius - 3.0);
-    painter.line_segment([p_start, p_end], Stroke::new(1.6_f32, Color32::WHITE));
+    painter.line_segment(
+        [center + dir * 2.0, center + dir * (dial_radius - 3.0)],
+        Stroke::new(1.6_f32, Color32::WHITE),
+    );
     painter.circle_filled(center + dir * (dial_radius - 3.2), 1.7, color);
     painter.circle_filled(center, 1.6, CyberTheme::BG_VOID);
 
-    // 8. Label Text Underneath (Clean, matches new_ui.jpeg)
-    let text_pos_label = pos2(rect.center().x, rect.max.y - 10.0);
+    // 6. Label
     painter.text(
-        text_pos_label,
+        pos2(rect.center().x, rect.max.y - 10.0),
         nih_plug_egui::egui::Align2::CENTER_TOP,
         label,
         FontId::monospace(7.6),
@@ -314,16 +360,67 @@ fn draw_knob_internal(
         },
     );
 
-    // Value tooltip on hover
     if is_hovered {
-        let full_val_str = match custom_readout {
-            Some(s) => s.to_string(),
-            None => format_val(*value, is_log),
-        };
-        response = response.on_hover_text(format!("{}: {}", label, full_val_str));
+        if let Some(readout) = readout {
+            response = response.on_hover_text(format!("{}: {}", label, readout));
+        }
     }
 
     response
+}
+
+/// Draw and edit a compact horizontal slider on a 0..1 normalised value.
+pub fn slider_core(
+    ui: &mut Ui,
+    norm: &mut f32,
+    label: &str,
+    width: f32,
+    color: Color32,
+    readout: &str,
+) -> Response {
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(width, 22.0), Sense::click_and_drag());
+    let track = nih_plug_egui::egui::Rect::from_min_max(
+        pos2(rect.min.x + 38.0, rect.center().y - 2.5),
+        pos2(rect.max.x - 34.0, rect.center().y + 2.5),
+    );
+
+    let mut value = norm.clamp(0.0, 1.0);
+    if (resp.dragged() || resp.clicked()) && track.width() > 1.0 {
+        if let Some(p) = resp.interact_pointer_pos() {
+            value = ((p.x - track.min.x) / track.width()).clamp(0.0, 1.0);
+            *norm = value;
+            resp.mark_changed();
+        }
+    }
+
+    let p = ui.painter();
+    p.text(
+        pos2(rect.min.x, rect.center().y),
+        nih_plug_egui::egui::Align2::LEFT_CENTER,
+        label,
+        FontId::monospace(7.0),
+        CyberTheme::TEXT_MUTED,
+    );
+    p.rect_filled(track, 1.0, Color32::from_rgb(24, 14, 42));
+    let fill = nih_plug_egui::egui::Rect::from_min_max(
+        track.min,
+        pos2(track.min.x + track.width() * value, track.max.y),
+    );
+    p.rect_filled(fill, 1.0, CyberTheme::alpha(color, 55));
+    p.line_segment(
+        [pos2(fill.max.x, track.min.y), pos2(fill.max.x, track.max.y)],
+        Stroke::new(1.6_f32, color),
+    );
+    p.circle_filled(pos2(fill.max.x, track.center().y), 2.4, color);
+    p.text(
+        pos2(rect.max.x, rect.center().y),
+        nih_plug_egui::egui::Align2::RIGHT_CENTER,
+        readout,
+        FontId::monospace(6.8),
+        CyberTheme::TEXT_PRIMARY,
+    );
+
+    resp
 }
 
 fn draw_arc(
@@ -357,20 +454,44 @@ fn draw_arc(
     }
 }
 
-fn format_val(val: f32, is_log: bool) -> String {
-    if is_log {
-        if val >= 1000.0 {
-            format!("{:.1}k", val / 1000.0)
-        } else if val >= 10.0 {
-            format!("{:.0}Hz", val)
-        } else {
-            format!("{:.2}s", val)
-        }
-    } else if val.abs() >= 100.0 {
-        format!("{:.0}", val)
-    } else if val.abs() >= 10.0 {
-        format!("{:.1}", val)
-    } else {
-        format!("{:.2}", val)
+// ---------------------------------------------------------------------------
+// Non-parameter knob (sequencer step pitch, which is pattern data)
+// ---------------------------------------------------------------------------
+
+/// Rotary knob over a plain integer range, used for sequencer step offsets.
+pub fn draw_rotary_knob_i8(
+    ui: &mut Ui,
+    value: &mut i8,
+    range: std::ops::RangeInclusive<i8>,
+    label: &str,
+    color: Color32,
+) -> Response {
+    let min = *range.start() as f32;
+    let max = *range.end() as f32;
+    let mut norm = ((*value as f32 - min) / (max - min)).clamp(0.0, 1.0);
+    let readout = format!("{:+}", *value);
+    let resp = knob_core(ui, &mut norm, label, color, 14.0, Some(&readout));
+    if resp.changed() {
+        *value = (min + norm * (max - min)).round().clamp(min, max) as i8;
     }
+    resp
+}
+
+/// Rotary knob over a plain float range (non-parameter UI values).
+pub fn draw_rotary_knob(
+    ui: &mut Ui,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    label: &str,
+    color: Color32,
+) -> Response {
+    let min = *range.start();
+    let max = *range.end();
+    let mut norm = ((*value - min) / (max - min)).clamp(0.0, 1.0);
+    let readout = format!("{:.2}", *value);
+    let resp = knob_core(ui, &mut norm, label, color, 14.0, Some(&readout));
+    if resp.changed() {
+        *value = min + norm * (max - min);
+    }
+    resp
 }

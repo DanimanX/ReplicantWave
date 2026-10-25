@@ -3,13 +3,14 @@
 //! The deck is always visible (no drawer), with transport, DAW sync, key-trig,
 //! mode/length/rate, a 64-step radar and 16 editable pad columns.
 
-use super::knob::draw_rotary_knob_i8;
-use super::model::SeqUi;
+use super::knob::{draw_rotary_knob_i8, param_chip, param_select, write_b, write_i};
 use super::theme::CyberTheme;
-use crate::audio::step_sequencer::{SeqMode, SeqRate, Step, MAX_STEPS};
+use crate::audio::step_sequencer::{Step, MAX_STEPS};
+use crate::params::SeqParams;
+use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{
-    pos2, vec2, Align, Button, Color32, ComboBox, DragValue, Layout, Rect, Response, RichText,
-    Sense, Stroke, StrokeKind, Ui, UiBuilder,
+    pos2, vec2, Align, Button, Color32, DragValue, Layout, Rect, RichText, Sense, Stroke,
+    StrokeKind, Ui, UiBuilder,
 };
 
 #[derive(Clone, Debug)]
@@ -29,8 +30,10 @@ impl Default for SequencerUiState {
 
 pub fn draw_sequencer_deck(
     ui: &mut Ui,
+    setter: &ParamSetter,
     rect: Rect,
-    seq: &mut SeqUi,
+    seq: &SeqParams,
+    steps: &mut Vec<Step>,
     state: &mut SequencerUiState,
     active_step: usize,
     t: f32,
@@ -43,9 +46,14 @@ pub fn draw_sequencer_deck(
         pos2(rect.max.x - 12.0, rect.max.y - 7.0),
     );
 
-    if seq.running && state.auto_follow {
+    let running = seq.running.value();
+    let length = seq.length.value().clamp(1, MAX_STEPS as i32) as usize;
+
+    if running && state.auto_follow {
         state.page = (active_step / 16).min(3);
     }
+
+    let mut bpm_proxy = seq.bpm.value();
 
     ui.scope_builder(
         UiBuilder::new()
@@ -56,29 +64,38 @@ pub fn draw_sequencer_deck(
 
             // ---- Transport / mode toolbar -------------------------------
             ui.horizontal(|ui| {
-                let play_color = if seq.running {
+                let play_color = if running {
                     CyberTheme::NEON_LIME
                 } else {
                     CyberTheme::NEON_CYAN
                 };
-                let label = if seq.running { "■ STOP" } else { "▶ PLAY" };
+                let label = if running { "■ STOP" } else { "▶ PLAY" };
                 if ui
-                    .add(super::neon_button(label, play_color, seq.running))
+                    .add(super::neon_button(label, play_color, running))
                     .clicked()
                 {
-                    seq.running = !seq.running;
-                    if seq.running {
-                        if seq.mode == SeqMode::Off {
-                            seq.mode = SeqMode::InternalSynth;
+                    write_b(setter, &seq.running, !running);
+                    if !running {
+                        // Starting: make sure we are not in OFF mode.
+                        if seq.mode.value() == 3 {
+                            write_i(setter, &seq.mode, 0);
                         }
                         state.auto_follow = true;
                     }
                 }
-                small_chip(ui, &mut seq.host_sync, "SYNC", CyberTheme::NEON_CYAN, 54.0)
-                    .on_hover_text("Follow the DAW transport (opt-in)");
-                small_chip(
+                param_chip(
                     ui,
-                    &mut seq.key_trigger,
+                    setter,
+                    &seq.host_sync,
+                    "SYNC",
+                    CyberTheme::NEON_CYAN,
+                    54.0,
+                )
+                .on_hover_text("Follow the DAW transport (opt-in)");
+                param_chip(
+                    ui,
+                    setter,
+                    &seq.key_trigger,
                     "KEY",
                     CyberTheme::NEON_MAGENTA,
                     46.0,
@@ -92,14 +109,9 @@ pub fn draw_sequencer_deck(
                         .monospace()
                         .size(7.0),
                 );
-                let modes = [
-                    (SeqMode::InternalSynth, "SYNTH"),
-                    (SeqMode::ModCutoff, "CUTOFF"),
-                    (SeqMode::ModWTPos, "WT POS"),
-                    (SeqMode::Off, "OFF"),
-                ];
-                for (mode, name) in modes {
-                    let selected = seq.mode == mode;
+                let modes = ["SYNTH", "CUTOFF", "WT POS", "OFF"];
+                for (i, name) in modes.iter().enumerate() {
+                    let selected = seq.mode.value() == i as i32;
                     if ui
                         .add(category_button(
                             name,
@@ -109,7 +121,7 @@ pub fn draw_sequencer_deck(
                         ))
                         .clicked()
                     {
-                        seq.mode = mode;
+                        write_i(setter, &seq.mode, i as i32);
                     }
                 }
 
@@ -120,17 +132,17 @@ pub fn draw_sequencer_deck(
                         .monospace()
                         .size(7.0),
                 );
-                for len in [16usize, 32, 48, 64] {
+                for len in [16i32, 32, 48, 64] {
                     if ui
                         .add(category_button(
                             &format!("{}", len),
-                            seq.length == len,
+                            length as i32 == len,
                             CyberTheme::NEON_AMBER,
                             7.5,
                         ))
                         .clicked()
                     {
-                        seq.length = len;
+                        write_i(setter, &seq.length, len);
                     }
                 }
 
@@ -141,26 +153,13 @@ pub fn draw_sequencer_deck(
                         .monospace()
                         .size(7.0),
                 );
-                let rates = [
-                    SeqRate::Rate1_4,
-                    SeqRate::Rate1_8,
-                    SeqRate::Rate1_8T,
-                    SeqRate::Rate1_16,
-                    SeqRate::Rate1_16T,
-                    SeqRate::Rate1_16D,
-                    SeqRate::Rate1_32,
-                ];
-                let cur_rate = rates.iter().position(|r| *r == seq.rate).unwrap_or(3);
-                ComboBox::from_id_salt("seq_rate")
-                    .selected_text(RichText::new(seq.rate.name()).monospace().size(8.5))
-                    .width(64.0)
-                    .show_ui(ui, |ui| {
-                        for (i, r) in rates.iter().enumerate() {
-                            if ui.selectable_label(i == cur_rate, r.name()).clicked() {
-                                seq.rate = *r;
-                            }
-                        }
-                    });
+                param_select(
+                    ui,
+                    setter,
+                    &seq.rate,
+                    &["1/4", "1/8", "1/8 T", "1/16", "1/16 T", "1/16 D", "1/32"],
+                    64.0,
+                );
 
                 ui.add_space(4.0);
                 ui.label(
@@ -170,16 +169,19 @@ pub fn draw_sequencer_deck(
                         .size(7.0),
                 );
                 ui.add(
-                    DragValue::new(&mut seq.bpm)
+                    DragValue::new(&mut bpm_proxy)
                         .range(40.0..=240.0)
                         .speed(0.4)
                         .fixed_decimals(0),
                 );
+                if (bpm_proxy - seq.bpm.value()).abs() > 0.01 {
+                    super::knob::write_f(setter, &seq.bpm, bpm_proxy);
+                }
                 ui.add_space(4.0);
-                super::neon_slider(
+                super::knob::param_slider(
                     ui,
-                    &mut seq.swing,
-                    0.0..=0.75,
+                    setter,
+                    &seq.swing,
                     "SWING",
                     104.0,
                     CyberTheme::NEON_CYAN,
@@ -187,7 +189,7 @@ pub fn draw_sequencer_deck(
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
-                        RichText::new(format!("STEP {:02}", (active_step % seq.length.max(1)) + 1))
+                        RichText::new(format!("STEP {:02}", (active_step % length) + 1))
                             .color(CyberTheme::NEON_LIME)
                             .monospace()
                             .strong()
@@ -223,7 +225,17 @@ pub fn draw_sequencer_deck(
                 }
                 ui.add_space(6.0);
                 let w = ui.available_width().max(120.0);
-                draw_radar(ui, seq, active_step, state.page, w, 18.0, t);
+                draw_radar(
+                    ui,
+                    steps,
+                    length,
+                    running,
+                    active_step,
+                    state.page,
+                    w,
+                    18.0,
+                    t,
+                );
             });
 
             ui.add_space(2.0);
@@ -243,17 +255,16 @@ pub fn draw_sequencer_deck(
                     if idx >= MAX_STEPS {
                         break;
                     }
-                    let playing = seq.running
-                        && active_step % seq.length.max(1) == idx
-                        && state.page == active_step / 16;
+                    let playing =
+                        running && active_step % length == idx && state.page == active_step / 16;
                     draw_step_column(
                         ui,
-                        &mut seq.steps[idx],
+                        &mut steps[idx],
                         idx,
                         col_w,
                         playing,
-                        idx < seq.length,
-                        seq.root_note as i32 + seq.octave as i32 * 12,
+                        idx < length,
+                        seq.root_note.value() + seq.octave.value() * 12,
                         t,
                     );
                     if col < num_visible - 1 {
@@ -444,15 +455,6 @@ fn step_chip(label: &str, on: bool, color: Color32, width: f32) -> Button<'stati
     .min_size(vec2(width, 15.0))
 }
 
-fn small_chip(ui: &mut Ui, on: &mut bool, label: &str, color: Color32, width: f32) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, 17.0), Sense::click());
-    if resp.clicked() {
-        *on = !*on;
-    }
-    CyberTheme::chip(ui.painter(), rect, *on, color, label);
-    resp.on_hover_cursor(nih_plug_egui::egui::CursorIcon::PointingHand)
-}
-
 fn category_button(text: &str, selected: bool, color: Color32, size: f32) -> Button<'static> {
     Button::new(
         RichText::new(text.to_string())
@@ -490,9 +492,12 @@ fn note_name(note: i32) -> String {
     format!("{}{}", names[n], oct)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_radar(
     ui: &mut Ui,
-    seq: &SeqUi,
+    steps: &[Step],
+    length: usize,
+    running: bool,
     active_step: usize,
     page: usize,
     width: f32,
@@ -512,8 +517,8 @@ fn draw_radar(
     let step_w = rect.width() / MAX_STEPS as f32;
     for i in 0..MAX_STEPS {
         let x = rect.min.x + i as f32 * step_w;
-        let step = &seq.steps[i];
-        let in_len = i < seq.length;
+        let step = &steps[i];
+        let in_len = i < length;
         if in_len && step.gate {
             let norm = ((step.note_offset as f32 + 24.0) / 48.0).clamp(0.15, 0.9);
             let h = 4.0 + norm * (rect.height() - 7.0);
@@ -549,7 +554,7 @@ fn draw_radar(
     );
 
     // Animated playhead
-    if seq.running {
+    if running {
         let x = rect.min.x + (active_step as f32 + 0.5) * step_w;
         let a = (120.0 + 100.0 * (t * 9.0).sin()) as u8;
         p.line_segment(
