@@ -19,6 +19,9 @@ jobs:
           - os: ubuntu-latest
             artifact-name: replicantwave-linux
             platform: Linux
+          - os: ubuntu-24.04-arm
+            artifact-name: replicantwave-linux-arm64
+            platform: Linux-arm64
           - os: macos-latest
             artifact-name: replicantwave-macos
             platform: macOS
@@ -38,7 +41,7 @@ jobs:
           targets: ${{ matrix.os == 'macos-latest' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
 
       - name: Install Linux Dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libjack-jackd2-dev zip
@@ -92,14 +95,14 @@ jobs:
 
           else
             # Linux VST3
-            cd target/bundled && zip -r ../../dist_release/ReplicantWave-${VERSION}-Linux-VST3.zip replicantwave.vst3 && cd ../..
+            cd target/bundled && zip -r ../../dist_release/ReplicantWave-${VERSION}-${{ matrix.platform }}-VST3.zip replicantwave.vst3 && cd ../..
             # Linux CLAP
-            cd target/bundled && zip -r ../../dist_release/ReplicantWave-${VERSION}-Linux-CLAP.zip replicantwave.clap && cd ../..
+            cd target/bundled && zip -r ../../dist_release/ReplicantWave-${VERSION}-${{ matrix.platform }}-CLAP.zip replicantwave.clap && cd ../..
             # Linux Standalone
-            cd target/release && tar -czvf ../../dist_release/ReplicantWave-${VERSION}-Linux-Standalone.tar.gz replicantwave-standalone && cd ../..
+            cd target/release && tar -czvf ../../dist_release/ReplicantWave-${VERSION}-${{ matrix.platform }}-Standalone.tar.gz replicantwave-standalone && cd ../..
             # Linux All
-            cd target/bundled && zip -r ../../dist_release/ReplicantWave-${VERSION}-Linux-All.zip replicantwave.* && cd ../..
-            cd target/release && zip -u ../../dist_release/ReplicantWave-${VERSION}-Linux-All.zip replicantwave-standalone && cd ../..
+            cd target/bundled && zip -r ../../dist_release/ReplicantWave-${VERSION}-${{ matrix.platform }}-All.zip replicantwave.* && cd ../..
+            cd target/release && zip -u ../../dist_release/ReplicantWave-${VERSION}-${{ matrix.platform }}-All.zip replicantwave-standalone && cd ../..
           fi
 
           ls -lh dist_release/
